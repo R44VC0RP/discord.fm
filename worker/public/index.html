@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#d9c3a9">
+<title>anomaly.fm</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400..700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #d9c3a9;      /* page */
+    --cream: #efe0cc;      /* device shell */
+    --teal: #57b7b0;
+    --teal-deep: #3e968f;
+    --ink: #17140f;        /* near-black */
+    --ink-soft: #2a241c;
+    --cream-dim: #b39d80;
+    color-scheme: light;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100dvh; display: grid; padding: 24px 16px;
+    background: var(--paper);
+    font-family: "Pixelify Sans", ui-monospace, "SF Mono", Menlo, monospace;
+    color: var(--ink);
+    -webkit-font-smoothing: none;
+  }
+  .device {
+    /* margin auto centers on both axes and stays scrollable on short windows */
+    margin: auto;
+    width: min(92vw, 350px);
+    background: var(--cream);
+    border-radius: 34px;
+    padding: 16px 16px 22px;
+    box-shadow: 0 24px 60px rgba(37, 26, 14, .35);
+  }
+
+  /* speaker grille */
+  .grille {
+    height: 92px; border-radius: 22px 22px 10px 10px;
+    background-color: var(--teal);
+    background-image: radial-gradient(circle, rgba(15, 12, 8, .62) 2.1px, transparent 2.7px);
+    background-size: 10px 10px;
+    background-position: center;
+  }
+
+  /* now playing card */
+  .card {
+    background: var(--ink); color: var(--cream);
+    border-radius: 16px; margin-top: 12px; padding: 12px 14px 10px;
+    box-shadow: 0 5px 12px rgba(23, 20, 15, .22);
+  }
+  .card .row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  .card .title { font-size: 1.02rem; font-weight: 700; letter-spacing: .04em; margin-bottom: 6px; }
+  .card .title .glyph { color: var(--teal); margin-right: .35em; }
+  .card .mid { font-size: .8rem; }
+  .card .mid .left { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card .sub { font-size: .68rem; color: var(--cream-dim); margin-top: 3px; }
+  .onair .card .mid .left { color: var(--teal); }
+
+  /* tuning dial */
+  .dial-wrap { display: grid; place-items: center; padding: 26px 0 8px; }
+  #dial {
+    position: relative; width: 232px; aspect-ratio: 1; border: 0; padding: 0;
+    border-radius: 50%; cursor: pointer;
+    background: var(--ink);
+    box-shadow: 0 10px 22px rgba(23, 20, 15, .32);
+    font: inherit;
+  }
+  #dial:focus-visible { outline: 4px solid var(--teal-deep); outline-offset: 5px; }
+  #dial .num {
+    position: absolute; left: 50%; top: 50%;
+    color: var(--cream); font-size: .66rem; letter-spacing: .05em; opacity: .92;
+  }
+  .knob {
+    position: absolute; inset: 36px; border-radius: 50%;
+    background: var(--teal);
+    box-shadow: inset 0 -6px 0 rgba(23, 20, 15, .14);
+    transform: rotate(var(--rot, -32deg));
+    transition: transform .65s cubic-bezier(.34, 1.56, .64, 1);
+  }
+  .knob .dot {
+    position: absolute; top: 16px; left: 50%; margin-left: -9px;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: var(--teal-deep);
+  }
+  .receiving .knob { --rot: 142deg; }
+  .tuning .knob { animation: seek 1.15s ease-in-out infinite alternate; }
+  @keyframes seek { from { transform: rotate(136deg); } to { transform: rotate(150deg); } }
+  #dial:active .knob { scale: .975; }
+
+  /* volume */
+  .volume { padding: 18px 22px 4px; }
+  input[type="range"] {
+    -webkit-appearance: none; appearance: none; width: 100%; height: 30px;
+    background: transparent; cursor: pointer;
+  }
+  input[type="range"]::-webkit-slider-runnable-track { height: 3px; border-radius: 2px; background: var(--ink-soft); }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 20px; height: 30px; border-radius: 7px;
+    background: var(--ink); margin-top: -13.5px;
+  }
+  input[type="range"]::-moz-range-track { height: 3px; border-radius: 2px; background: var(--ink-soft); }
+  input[type="range"]::-moz-range-thumb {
+    width: 20px; height: 30px; border-radius: 7px; border: 0; background: var(--ink);
+  }
+  input[type="range"]:focus-visible { outline: 3px solid var(--teal-deep); outline-offset: 2px; border-radius: 8px; }
+
+  /* footer status */
+  .foot {
+    display: flex; align-items: center; justify-content: center; gap: .55em;
+    font-size: .72rem; letter-spacing: .06em; margin-top: 10px; min-height: 1.2em;
+  }
+  .foot .livedot { width: 12px; height: 12px; border-radius: 50%; background: var(--ink-soft); }
+  .onair .foot .livedot { background: var(--teal-deep); animation: blink 1.7s infinite; }
+  .signal-line { text-align: center; font-size: .62rem; color: #8a7458; letter-spacing: .12em; margin-top: 5px; min-height: 1em; }
+  @keyframes blink { 50% { opacity: .3; } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .knob { transition: none; }
+    .tuning .knob { animation: none; }
+    .onair .foot .livedot { animation: none; }
+  }
+</style>
+</head>
+<body>
+<main class="device" id="device">
+  <div class="grille" aria-hidden="true"></div>
+
+  <section class="card">
+    <div class="title"><span class="glyph" id="glyph">&#9654;</span>ANOMALY.FM</div>
+    <div class="row mid">
+      <span class="left" id="statusText">tuning&hellip;</span>
+      <span class="right" id="booth">&ndash;</span>
+    </div>
+    <div class="row sub">
+      <span class="left">transmitting from the anomaly</span>
+      <span class="right">610 kHz AM</span>
+    </div>
+  </section>
+
+  <div class="dial-wrap">
+    <button id="dial" aria-pressed="false" aria-label="Tune in">
+      <span class="knob" aria-hidden="true"><span class="dot"></span></span>
+    </button>
+  </div>
+
+  <div class="volume">
+    <input type="range" id="vol" min="0" max="100" value="80" aria-label="Volume">
+  </div>
+
+  <div class="foot"><span class="livedot" aria-hidden="true"></span><span id="meta">&ndash; receivers tuned in</span></div>
+  <div class="signal-line" id="signal">&nbsp;</div>
+</main>
+
+<script>window.STATION_ORIGIN = "https://lagoon-to-equestrian.exe.xyz";</script>
+<script>
+(() => {
+  // Same-origin by default (served by icecast); the Cloudflare Worker copy
+  // sets window.STATION_ORIGIN to the station's public URL.
+  const STATION = window.STATION_ORIGIN || '';
+  const audio = new Audio();
+  audio.preload = 'none';
+  let wantPlaying = false;
+
+  const device = document.getElementById('device');
+  const dial = document.getElementById('dial');
+  const glyph = document.getElementById('glyph');
+  const signal = document.getElementById('signal');
+  const statusText = document.getElementById('statusText');
+  const booth = document.getElementById('booth');
+  const meta = document.getElementById('meta');
+  const vol = document.getElementById('vol');
+
+  // dial numbers: AM band, tangential like a real tuner
+  const NUMBERS = [54, 60, 70, 80, 100, 120, 140, 160];
+  NUMBERS.forEach((n, i) => {
+    const angle = -132 + (264 / (NUMBERS.length - 1)) * i;
+    const span = document.createElement('span');
+    span.className = 'num';
+    span.textContent = n;
+    span.style.transform =
+      'translate(-50%, -50%) rotate(' + angle + 'deg) translateY(-99px)';
+    dial.appendChild(span);
+  });
+
+  // volume (persisted)
+  const savedVol = localStorage.getItem('anomalyfm-vol');
+  if (savedVol !== null) {
+    const v = Number(savedVol);
+    if (Number.isFinite(v) && v >= 0 && v <= 100) vol.value = v;
+  }
+  const applyVolume = () => { audio.volume = vol.value / 100; };
+  vol.addEventListener('input', () => { applyVolume(); localStorage.setItem('anomalyfm-vol', vol.value); });
+  applyVolume();
+
+  const setSignal = (text) => { signal.textContent = text || '\u00a0'; };
+  const setState = (cls) => {
+    device.classList.toggle('receiving', cls === 'receiving');
+    device.classList.toggle('tuning', cls === 'tuning');
+    glyph.innerHTML = wantPlaying ? '&#9632;' : '&#9654;';
+    dial.setAttribute('aria-pressed', String(wantPlaying));
+    dial.setAttribute('aria-label', wantPlaying ? 'Tune out' : 'Tune in');
+  };
+
+  function start() {
+    wantPlaying = true;
+    setState('tuning');
+    setSignal('TUNING\u2026');
+    audio.src = STATION + '/radio?t=' + Date.now();
+    applyVolume();
+    audio.play().then(() => { setState('receiving'); setSignal('RECEIVING'); }).catch(() => {
+      // Autoplay blocked: arm a one-shot "any interaction tunes in".
+      wantPlaying = false;
+      setState('off');
+      setSignal('TURN THE DIAL TO TUNE IN');
+      document.addEventListener('pointerdown', (e) => {
+        if (!wantPlaying && !dial.contains(e.target) && !vol.contains(e.target)) start();
+      }, { once: true });
+    });
+  }
+
+  function stop() {
+    wantPlaying = false;
+    setState('off');
+    setSignal('RECEIVER OFF');
+    audio.pause();
+    audio.removeAttribute('src');
+    audio.load();
+  }
+
+  dial.addEventListener('click', () => (wantPlaying ? stop() : start()));
+  audio.addEventListener('playing', () => { if (wantPlaying) { setState('receiving'); setSignal('RECEIVING'); } });
+  audio.addEventListener('waiting', () => { if (wantPlaying) { setState('tuning'); setSignal('TUNING\u2026'); } });
+  audio.addEventListener('error', () => {
+    if (!wantPlaying) return;
+    setState('tuning');
+    setSignal('SIGNAL LOST \u2014 RETRYING');
+    setTimeout(() => {
+      if (!wantPlaying) return;
+      audio.src = STATION + '/radio?t=' + Date.now();
+      audio.play().catch(() => {});
+    }, 3000);
+  });
+
+  async function poll() {
+    try {
+      const res = await fetch(STATION + '/feed/status.json', { cache: 'no-store' });
+      const s = await res.json();
+      if (s.humans > 0) {
+        device.classList.add('onair');
+        statusText.textContent = 'ON AIR \u2014 ' + s.members.join(', ');
+      } else {
+        device.classList.remove('onair');
+        statusText.textContent = s.live
+          ? 'INTERMISSION \u2014 music through the static'
+          : 'OFF AIR \u2014 static';
+      }
+      booth.textContent = s.humans > 0 ? s.humans + ' IN BOOTH' : '\u2013';
+    } catch {
+      device.classList.remove('onair');
+      statusText.textContent = 'status unavailable';
+    }
+    try {
+      const res = await fetch(STATION + '/status-json.xsl', { cache: 'no-store' });
+      const ice = await res.json();
+      const raw = ice.icestats && ice.icestats.source;
+      const sources = (Array.isArray(raw) ? raw : [raw]).filter(Boolean);
+      const mount = sources.find((x) => x.listenurl && x.listenurl.endsWith('/radio'));
+      if (mount) {
+        const n = mount.listeners ?? 0;
+        meta.textContent = n + ' RECEIVER' + (n === 1 ? '' : 'S') + ' TUNED IN';
+      }
+    } catch { /* keep last value */ }
+  }
+
+  setState('off');
+  poll();
+  setInterval(poll, 15000);
+  start(); // best-effort autoplay; falls back to first-interaction tune-in
+})();
+</script>
+</body>
+</html>

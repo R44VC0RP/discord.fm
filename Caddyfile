@@ -1,0 +1,6 @@
+{$STREAM_DOMAIN} {
+	# Stream bytes through immediately; never buffer the radio.
+	reverse_proxy icecast:8000 {
+		flush_interval -1
+	}
+}

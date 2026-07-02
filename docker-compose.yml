@@ -1,0 +1,52 @@
+services:
+  bot:
+    build: ./bot
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Inside the compose network the bot always talks to the icecast service.
+      ICECAST_HOST: icecast
+    volumes:
+      - ./music:/music:ro
+      # Activity feed files, served by icecast at /feed/.
+      - ./feed:/feed
+    depends_on:
+      - icecast
+
+  icecast:
+    build: ./icecast
+    restart: unless-stopped
+    volumes:
+      - ./feed:/usr/share/icecast2/web/feed:ro
+      # Directory mount so player updates apply without restarting icecast.
+      - ./web:/usr/share/icecast2/web/station:ro
+    environment:
+      ICECAST_SOURCE_PASSWORD: ${ICECAST_SOURCE_PASSWORD:?set it in .env}
+      ICECAST_ADMIN_PASSWORD: ${ICECAST_ADMIN_PASSWORD:?set it in .env}
+      ICECAST_RELAY_PASSWORD: ${ICECAST_RELAY_PASSWORD:-}
+      ICECAST_HOSTNAME: ${STREAM_DOMAIN:-localhost}
+      ICECAST_MAX_CLIENTS: ${ICECAST_MAX_CLIENTS:-250}
+    ports:
+      - "8000:8000"
+
+  # Optional TLS terminator. Enable with: docker compose --profile tls up -d
+  # Skip it if the box already runs traefik/nginx/caddy -- just proxy to :8000.
+  caddy:
+    image: caddy:2
+    profiles: ["tls"]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      STREAM_DOMAIN: ${STREAM_DOMAIN:?set it in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - icecast
+
+volumes:
+  caddy_data:
+  caddy_config:

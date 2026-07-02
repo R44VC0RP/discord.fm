@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+.wrangler/
+
+# your background track (too large for git; drop your own in music/)
+music/*
+!music/.gitkeep
+
+# generated at runtime by the bot
+feed/*
+!feed/.gitkeep

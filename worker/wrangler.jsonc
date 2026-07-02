@@ -1,0 +1,7 @@
+{
+  "name": "anomaly-fm",
+  "compatibility_date": "2026-06-20",
+  "assets": {
+    "directory": "./public"
+  }
+}

@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>anomaly.fm</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; min-height: 100dvh; display: grid; place-items: center;
+    background: radial-gradient(ellipse at center, #1a1410 0%, #0a0806 70%);
+    color: #e8d5b0; font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  .radio {
+    border: 1px solid #3a2f22; border-radius: 12px; padding: 2rem 2.5rem;
+    background: linear-gradient(180deg, #171310, #100d0a);
+    box-shadow: 0 20px 60px rgba(0,0,0,.6); text-align: center;
+  }
+  h1 { margin: 0 0 .25rem; font-size: 1.1rem; letter-spacing: .35em; font-weight: 600; }
+  .freq { color: #b8642a; font-size: .75rem; letter-spacing: .2em; margin-bottom: 1.5rem; }
+  .dial {
+    height: 6px; border-radius: 3px; margin-bottom: 1.5rem;
+    background: linear-gradient(90deg, #2a2118 30%, #b8642a 50%, #2a2118 70%);
+  }
+  audio { width: 280px; }
+  .live { font-size: .7rem; margin-top: 1rem; color: #6b5a42; }
+  .live::before { content: "\25CF "; color: #b8642a; animation: blink 2s infinite; }
+  @keyframes blink { 50% { opacity: .3; } }
+</style>
+</head>
+<body>
+  <div class="radio">
+    <h1>ANOMALY.FM</h1>
+    <div class="freq">TRANSMITTING FROM THE ANOMALY</div>
+    <div class="dial"></div>
+    <!-- Point at your stream: https://STREAM_DOMAIN + ICECAST_MOUNT -->
+    <audio src="https://lagoon-to-equestrian.exe.xyz/radio" preload="none" controls></audio>
+    <div class="live">LIVE</div>
+  </div>
+</body>
+</html>
