@@ -299,6 +299,11 @@
       + (archived
           ? '<button data-vmarch="' + esc(v.file) + '" data-flag="false" title="restore">\u21A9\uFE0F</button><button class="danger" data-vmdel="' + esc(v.file) + '" title="delete forever">\u{1F5D1}\uFE0F</button>'
           : '<button data-vmarch="' + esc(v.file) + '" data-flag="true" title="archive">\u{1F5C4}\uFE0F</button>')
+      + '</td></tr>'
+      + '<tr><td colspan="5" style="border-top:none;padding-top:0;font-size:.78rem;color:var(--brown-dim);font-style:italic">'
+      + (v.meta && v.meta.transcript ? '\u{1F5D2}\uFE0F \u201C' + esc(v.meta.transcript) + '\u201D'
+         : v.meta && v.meta.transcript === '' ? '\u{1F5D2}\uFE0F (no speech detected)'
+         : '\u{1F5D2}\uFE0F transcribing\u2026')
       + '</td></tr>';
     const inbox = vms.filter((v) => !(v.meta && v.meta.archived));
     const archived = vms.filter((v) => v.meta && v.meta.archived);

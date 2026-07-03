@@ -11,6 +11,7 @@ export interface HotlineItem {
   file: string;
   from: string;
   durationSeconds: number | null;
+  transcript: string | null;
 }
 
 /** Inbox (non-archived), newest first — same ordering the control room shows. */
@@ -22,7 +23,7 @@ export async function listInbox(): Promise<HotlineItem[]> {
     .reverse();
   const items: HotlineItem[] = [];
   for (const name of names) {
-    let meta: { archived?: boolean; from?: string; durationSeconds?: number } | null = null;
+    let meta: { archived?: boolean; from?: string; durationSeconds?: number; transcript?: string } | null = null;
     try {
       meta = JSON.parse(await readFile(join(dir, name.replace(/\.mp3$/, '.json')), 'utf8'));
     } catch {
@@ -33,6 +34,7 @@ export async function listInbox(): Promise<HotlineItem[]> {
       file: name,
       from: meta?.from ?? 'unknown',
       durationSeconds: meta?.durationSeconds ?? null,
+      transcript: meta?.transcript?.trim() || null,
     });
   }
   return items;

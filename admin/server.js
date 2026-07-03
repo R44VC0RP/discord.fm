@@ -29,6 +29,58 @@ const TW_AUTH = 'Basic ' + Buffer.from(`${TW_SID}:${TW_TOKEN}`).toString('base64
 
 const SAFE_NAME = /^[\w.-]+\.mp3$/;
 
+// --- voicemail transcription (xAI Grok STT; skipped when key is absent) ---
+const XAI_KEY = process.env.XAI_API_KEY || '';
+
+async function transcribe(mp3Path) {
+  if (!XAI_KEY) return null;
+  const fd = new FormData();
+  fd.append('format', 'true'); // inverse text normalization ("six ninety nine" -> "$6.99")
+  fd.append('language', 'en');
+  // Per the docs, `file` must be the LAST multipart field.
+  fd.append('file', new Blob([await fsp.readFile(mp3Path)], { type: 'audio/mpeg' }), path.basename(mp3Path));
+  const res = await fetch('https://api.x.ai/v1/stt', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${XAI_KEY}` },
+    body: fd,
+    signal: AbortSignal.timeout(60_000),
+  });
+  if (!res.ok) throw new Error(`xai stt HTTP ${res.status}`);
+  const data = await res.json();
+  const text = String(data.text ?? '').trim();
+  return text || null;
+}
+
+/** Adds meta.transcript to a voicemail json (best-effort). Empty string =
+ *  transcription succeeded but no speech detected (stops re-attempts). */
+async function transcribeVoicemail(base) {
+  if (!XAI_KEY) return;
+  const metaPath = path.join(VOICEMAILS, `${base}.json`);
+  try {
+    const text = (await transcribe(path.join(VOICEMAILS, `${base}.mp3`))) ?? '';
+    const meta = JSON.parse(await fsp.readFile(metaPath, 'utf8'));
+    meta.transcript = text.slice(0, 4000);
+    await fsp.writeFile(metaPath, JSON.stringify(meta, null, 2));
+    console.log(`[stt] transcribed ${base}: ${text ? text.slice(0, 80) : '(no speech)'}`);
+  } catch (error) {
+    console.warn(`[stt] ${base} failed:`, error.message);
+  }
+}
+
+/** Backfill: transcribe any existing voicemails that lack a transcript. */
+async function transcribeBackfill() {
+  if (!XAI_KEY) return;
+  const names = (await fsp.readdir(VOICEMAILS).catch(() => []))
+    .filter((n) => n.startsWith('vm-') && n.endsWith('.json'));
+  for (const name of names) {
+    try {
+      const meta = JSON.parse(await fsp.readFile(path.join(VOICEMAILS, name), 'utf8'));
+      if (meta.transcript !== undefined) continue;
+    } catch { continue; }
+    await transcribeVoicemail(name.replace(/\.json$/, ''));
+  }
+}
+
 // --- archive -> branded mp4 renders (same look as the /clip command) ---
 const WEB = process.env.WEB_DIR || '/web';
 const MP4_DIR = path.join(RECORDINGS, 'mp4');
@@ -349,14 +401,18 @@ const server = http.createServer(async (req, res) => {
         }, null, 2),
       );
       console.log(`[call] voicemail saved: ${base} from ${from}`);
-      // Tell the bot so it can announce the new message in the channel.
-      try {
-        await botFetch('/voicemail/received', { method: 'POST', body: JSON.stringify({ file: `${base}.mp3` }) });
-      } catch { /* notification is best-effort */ }
-      // Housekeeping: remove the recording from Twilio's storage.
-      try {
-        await fetch(`${params.get('RecordingUrl')}.json`, { method: 'DELETE', headers: { authorization: TW_AUTH } });
-      } catch { /* best effort */ }
+      // Finish async so Twilio gets its 200 immediately: transcribe FIRST
+      // (the Discord notify includes the transcript), then notify + cleanup.
+      const recordingUrl = params.get('RecordingUrl');
+      void (async () => {
+        await transcribeVoicemail(base);
+        try {
+          await botFetch('/voicemail/received', { method: 'POST', body: JSON.stringify({ file: `${base}.mp3` }) });
+        } catch { /* notification is best-effort */ }
+        try {
+          await fetch(`${recordingUrl}.json`, { method: 'DELETE', headers: { authorization: TW_AUTH } });
+        } catch { /* best effort */ }
+      })();
       return send(res, 200, { ok: true });
     }
 
@@ -508,3 +564,5 @@ const server = http.createServer(async (req, res) => {
 
 fs.mkdirSync(VOICEMAILS, { recursive: true });
 server.listen(PORT, '0.0.0.0', () => console.log(`[admin] control room on :${PORT} (bot api: ${BOT_API})`));
+// Transcribe any pre-existing voicemails once the server is settled.
+setTimeout(() => void transcribeBackfill(), 10_000);

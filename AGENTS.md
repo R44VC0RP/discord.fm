@@ -260,6 +260,16 @@ Verify after: `https://anomaly.fm/` 200, `/radio` streams, bot logs show
 
 - Discord: `/radio join|leave|status` (Manage Server required),
   `/clip [seconds]` (everyone), `/hotline list|play|air`.
+- Voicemail transcription: xAI Grok STT (`POST https://api.x.ai/v1/stt`,
+  multipart, `file` field MUST be last, `format=true` needs `language`;
+  key XAI_API_KEY in box .env). Admin transcribes each voicemail BEFORE
+  notifying the bot (Discord notify + /hotline list quote the transcript);
+  meta.transcript in vm-*.json ('' = no speech, stops backfill retries).
+  Backfill sweep runs 10s after admin boot. Preflight = read the transcript
+  in the control room / Discord before /hotline air.
+- Playwriter gotcha: loading fm.anoma.ly as https://user:pass@… makes
+  Chrome reject the page's own fetch() calls (UI looks dead). Navigate the
+  clean URL and let cached basic-auth credentials apply.
 - Control room `https://fm.anoma.ly`: archive (play/mp4 download/cue/
   delete), rerun queue + auto toggle + skip, music bed upload/activate
   (hot-swap, no restart). Basic auth; creds in box `.env`.

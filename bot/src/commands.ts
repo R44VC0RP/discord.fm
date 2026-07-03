@@ -140,7 +140,10 @@ export async function handleHotlineCommand(
       await interaction.reply('hotline inbox is empty — call (361) 266-6259');
       return;
     }
-    const lines = inbox.slice(0, 10).map((item, i) => `**${i + 1}.** ${hotlineLabel(item)}`);
+    const lines = inbox.slice(0, 10).map((item, i) => {
+      const quote = item.transcript ? `\n> 🗒️ ${item.transcript.slice(0, 140)}${item.transcript.length > 140 ? '…' : ''}` : '';
+      return `**${i + 1}.** ${hotlineLabel(item)}${quote}`;
+    });
     if (inbox.length > 10) lines.push(`…and ${inbox.length - 10} more in the control room`);
     lines.push('`/hotline play N` preview here (not on air) · `/hotline air N` broadcast');
     await interaction.reply({ content: lines.join('\n'), allowedMentions: { parse: [] } });

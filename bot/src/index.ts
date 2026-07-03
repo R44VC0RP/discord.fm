@@ -195,10 +195,11 @@ async function announceVoicemail(fileName: string): Promise<void> {
   const index = inbox.findIndex((item) => item.file === basename(fileName));
   const item = index >= 0 ? inbox[index]! : null;
   const n = index >= 0 ? index + 1 : 'N';
+  const quote = item?.transcript ? `\n> 🗒️ “${item.transcript.slice(0, 600)}”` : '';
   await channel
     .send({
       content:
-        `📞 New hotline message: ${item ? hotlineLabel(item) : basename(fileName)}\n` +
+        `📞 New hotline message: ${item ? hotlineLabel(item) : basename(fileName)}${quote}\n` +
         `\`/hotline play ${n}\` preview here · \`/hotline air ${n}\` broadcast · \`/hotline list\` inbox`,
       allowedMentions: { parse: [] },
     })
