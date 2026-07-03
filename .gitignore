@@ -12,3 +12,14 @@ music/*
 # generated at runtime by the bot
 feed/*
 !feed/.gitkeep
+
+# session recordings
+recordings/*
+!recordings/.gitkeep
+
+# hotline voicemails (private caller audio + numbers)
+voicemails/*
+!voicemails/.gitkeep
+
+# generated daily by the bot's skin rotation
+web/current.html

@@ -177,7 +177,12 @@ export class Mixer {
   private framesSent = 0;
   private music: { source: MusicFrameSource; opts: MusicOptions } | null = null;
   private musicGain = 0;
-  private musicTarget = 0;
+  private musicDucked = false;
+  /** Rerun deck: plays at full gain; the music bed fades out underneath it. */
+  private deck: MusicFrameSource | null = null;
+  /** One-shot announcement (hourly time checks): speaks over ducked bed/deck. */
+  private announcement: { buf: Buffer; offset: number } | null = null;
+  private annDuck = 1;
   private readonly crackle = new CrackleGenerator();
 
   setSink(sink: (frame: Buffer) => void): void {
@@ -191,19 +196,31 @@ export class Mixer {
 
   attachMusic(source: MusicFrameSource, opts: MusicOptions): void {
     this.music = { source, opts };
-    this.musicGain = opts.baseGain;
-    this.musicTarget = opts.baseGain;
+    this.musicGain = this.musicDucked ? opts.duckGain : opts.baseGain;
   }
 
   /** Duck the music bed while humans are in the channel. */
   setDucked(ducked: boolean): void {
-    if (!this.music) return;
-    this.musicTarget = ducked ? this.music.opts.duckGain : this.music.opts.baseGain;
+    this.musicDucked = ducked;
   }
 
-  get musicState(): 'off' | 'playing' | 'ducked' {
+  setDeckSource(source: MusicFrameSource | null): void {
+    this.deck = source;
+  }
+
+  /** Queue a one-shot spoken announcement (48kHz stereo s16le PCM). */
+  playAnnouncement(pcm: Buffer): void {
+    if (pcm.length >= BYTES_PER_FRAME) this.announcement = { buf: pcm, offset: 0 };
+  }
+
+  get announcing(): boolean {
+    return this.announcement !== null;
+  }
+
+  get musicState(): 'off' | 'playing' | 'ducked' | 'silenced' {
     if (!this.music) return 'off';
-    return this.musicTarget < this.music.opts.baseGain ? 'ducked' : 'playing';
+    if (this.deck) return 'silenced';
+    return this.musicDucked ? 'ducked' : 'playing';
   }
 
   pushUser(userId: string, pcm: Buffer): void {
@@ -262,33 +279,64 @@ export class Mixer {
       if (frame) frames.push(frame);
     }
 
+    // Announcement frame (one-shot, consumed frame by frame).
+    let annFrame: Buffer | null = null;
+    if (this.announcement) {
+      const { buf, offset } = this.announcement;
+      const end = Math.min(offset + BYTES_PER_FRAME, buf.length);
+      if (end - offset === BYTES_PER_FRAME) {
+        annFrame = buf.subarray(offset, end);
+      } else {
+        annFrame = Buffer.alloc(BYTES_PER_FRAME);
+        buf.copy(annFrame, 0, offset, end);
+      }
+      this.announcement.offset = end;
+      if (end >= buf.length) this.announcement = null;
+    }
+
+    // While announcing, the rerun deck ducks under the voice (smoothed).
+    const annTarget = annFrame ? 0.2 : 1;
+    if (this.annDuck > annTarget) this.annDuck = Math.max(annTarget, this.annDuck - 0.06);
+    else if (this.annDuck < annTarget) this.annDuck = Math.min(annTarget, this.annDuck + 0.06);
+
     // Advance the music gain envelope every frame, even during underruns,
-    // so fades keep moving at a constant rate.
+    // so fades keep moving at a constant rate. A live rerun deck forces the
+    // bed to zero (recordings carry their own bed); announcements duck it.
     let musicFrame: Buffer | null = null;
     if (this.music) {
       const { opts, source } = this.music;
-      if (this.musicGain > this.musicTarget) {
-        this.musicGain = Math.max(this.musicTarget, this.musicGain - opts.stepDown);
-      } else if (this.musicGain < this.musicTarget) {
-        this.musicGain = Math.min(this.musicTarget, this.musicGain + opts.stepUp);
+      const target = this.deck
+        ? 0
+        : this.musicDucked || this.announcement || annFrame
+          ? opts.duckGain
+          : opts.baseGain;
+      if (this.musicGain > target) {
+        this.musicGain = Math.max(target, this.musicGain - opts.stepDown);
+      } else if (this.musicGain < target) {
+        this.musicGain = Math.min(target, this.musicGain + opts.stepUp);
       }
       musicFrame = source.readFrame();
     }
 
-    const crackleFrame = this.crackle.frame(frames.length > 0);
+    const deckFrame = this.deck ? this.deck.readFrame() : null;
+    // The announcement voice earns crackle just like live speakers.
+    const crackleFrame = this.crackle.frame(frames.length > 0 || annFrame !== null);
 
     let out: Buffer;
-    if (frames.length === 0 && !musicFrame && !crackleFrame) {
+    if (frames.length === 0 && !musicFrame && !deckFrame && !annFrame) {
       out = SILENT_FRAME;
-    } else if (frames.length === 1 && !musicFrame && !crackleFrame) {
+    } else if (frames.length === 1 && !musicFrame && !deckFrame && !annFrame) {
       out = frames[0]!;
     } else {
       const mixed = Buffer.allocUnsafe(BYTES_PER_FRAME);
       const gain = this.musicGain;
+      const deckGain = this.annDuck;
       for (let i = 0; i < BYTES_PER_FRAME; i += 2) {
         let sum = 0;
         for (const frame of frames) sum += frame.readInt16LE(i);
         if (musicFrame) sum += Math.round(musicFrame.readInt16LE(i) * gain);
+        if (deckFrame) sum += Math.round(deckFrame.readInt16LE(i) * deckGain);
+        if (annFrame) sum += annFrame.readInt16LE(i);
         // Mono crackle onto both channels: sample index i/2, mono index i/4.
         if (crackleFrame) sum += crackleFrame[(i >> 2)]!;
         if (sum > 32767) sum = 32767;

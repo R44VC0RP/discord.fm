@@ -29,11 +29,22 @@ export const config = {
     guildId: required('DISCORD_GUILD_ID'),
     /** Optional: auto-join this voice channel on boot. */
     voiceChannelId: optional('DISCORD_VOICE_CHANNEL_ID', ''),
+    /** Reconnect the voice session this often while the channel is empty. 0 disables. */
+    voiceRefreshHours: optionalNumber('VOICE_REFRESH_HOURS', 3),
+  },
+  youtube: {
+    /** Enables the YouTube live chat -> Discord bridge when both are set. */
+    apiKey: optional('YOUTUBE_API_KEY', ''),
+    videoId: optional('YOUTUBE_VIDEO_ID', ''),
+    /** Poll floor; ~45s keeps a 24/7 bridge inside the 10k/day quota. */
+    chatPollS: optionalNumber('YT_CHAT_POLL_S', 45),
   },
   station: {
     name: optional('STATION_NAME', 'anomaly.fm'),
     description: optional('STATION_DESCRIPTION', 'live from the anomaly'),
     genre: optional('STATION_GENRE', 'talk'),
+    /** Timezone for on-air labels (rerun date/time display). */
+    timeZone: optional('STATION_TZ', 'America/New_York'),
   },
   radio: {
     preset: optional('RADIO_PRESET', 'am') as RadioPreset,
@@ -61,8 +72,21 @@ export const config = {
     port: optionalNumber('ICECAST_PORT', 8000),
     mount: optional('ICECAST_MOUNT', '/radio'),
     sourcePassword: required('ICECAST_SOURCE_PASSWORD'),
+    /** Enables admin-filtered listener counts (excludes tv/recorder). */
+    adminPassword: optional('ICECAST_ADMIN_PASSWORD', ''),
+  },
+  rerun: {
+    /** Auto-rotate the archive while the channel is empty. */
+    auto: optional('RERUN_AUTO', 'true') !== 'false',
+    /** Wait after live ends before any rerun starts. */
+    afterLiveMin: optionalNumber('RERUN_AFTER_LIVE_MIN', 35),
+    /** Music-bed gap between consecutive reruns. */
+    gapMin: optionalNumber('RERUN_GAP_MIN', 35),
+    recordingsDir: optional('RECORDINGS_DIR', '/recordings'),
   },
   music: {
+    /** Directory of selectable bed tracks (admin uploads land here). */
+    dir: optional('MUSIC_DIR', '/music'),
     /** Path to the looping background track inside the container. "off" disables. */
     file: offable(optional('MUSIC_FILE', '/music/background.mp3')),
     /** Music level when the channel is empty. */
@@ -73,6 +97,29 @@ export const config = {
     fadeDownMs: optionalNumber('MUSIC_FADE_DOWN_MS', 1200),
     /** Fade time when the channel empties (back up). */
     fadeUpMs: optionalNumber('MUSIC_FADE_UP_MS', 3000),
+  },
+  web: {
+    /** Station web root (skins + generated current.html). Empty disables rotation. */
+    dir: optional('WEB_DIR', '/web'),
+  },
+  voicemail: {
+    /** Hotline recordings directory (shared with the admin app). */
+    dir: optional('VOICEMAIL_DIR', '/voicemails'),
+  },
+  archive: {
+    /** Finished sessions are rendered to mp4 and posted here. "off" disables. */
+    postChannelId: offable(optional('ARCHIVE_POST_CHANNEL_ID', '1522363822084587693')),
+    /** Admin app base URL (runs the mp4 renders). */
+    adminApi: optional('ADMIN_API', 'http://admin:8091'),
+  },
+  announcer: {
+    /** Hourly time checks air when both ElevenLabs values are set. */
+    elevenLabsKey: optional('ELEVENLABS_API_KEY', ''),
+    voiceId: optional('ELEVENLABS_VOICE_ID', ''),
+    /** Script LLM (opencode zen, Anthropic-compatible). Optional: plain time check without it. */
+    zenKey: optional('ZEN_API_KEY', ''),
+    zenModel: optional('ZEN_MODEL', 'claude-haiku-4-5'),
+    zenUrl: optional('ZEN_URL', 'https://opencode.ai/zen/v1/messages'),
   },
   feed: {
     /** Directory shared with icecast's webroot. "off" disables. */

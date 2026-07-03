@@ -19,6 +19,16 @@ export interface PresenceSnapshot {
   live: boolean;
   humans: number;
   members: string[];
+  /** Discord user IDs parallel to members (consumed by the recorder). */
+  memberIds?: string[];
+  /** Label of the recording currently replaying, if any. */
+  rerun?: string | null;
+}
+
+export function onAirLine(snapshot: PresenceSnapshot): string {
+  if (snapshot.humans > 0) return `ON AIR — ${snapshot.members.join(', ')}`;
+  if (snapshot.rerun) return `RERUN — ${snapshot.rerun}`;
+  return snapshot.live ? 'INTERMISSION — music through the static' : 'OFF AIR — static';
 }
 
 function esc(text: string): string {
@@ -32,6 +42,7 @@ function esc(text: string): string {
 export class ActivityFeed {
   private events: FeedEvent[] = [];
   private snapshot: PresenceSnapshot = { live: false, humans: 0, members: [] };
+  private listeners: { web: number | null; youtube: number | null; total: number | null } | null = null;
   private enabled: boolean;
 
   constructor(
@@ -70,11 +81,20 @@ export class ActivityFeed {
     await this.flush();
   }
 
+  /** Periodic audience counts (web already excludes internal consumers). */
+  async setListeners(breakdown: { web: number | null; youtube: number | null; total: number | null }): Promise<void> {
+    if (!this.enabled || JSON.stringify(this.listeners) === JSON.stringify(breakdown)) return;
+    this.listeners = breakdown;
+    await this.flush();
+  }
+
   private async flush(): Promise<void> {
     try {
       await Promise.all([
         writeFile(join(this.dir, 'feed.xml'), this.rss(), 'utf8'),
         writeFile(join(this.dir, 'status.json'), this.json(), 'utf8'),
+        // Single line consumed by the TV encoder's drawtext (reload=1).
+        writeFile(join(this.dir, 'onair.txt'), onAirLine(this.snapshot) + '\n', 'utf8'),
       ]);
     } catch (error) {
       console.warn('[feed] write failed:', error instanceof Error ? error.message : error);
@@ -118,6 +138,11 @@ export class ActivityFeed {
         live: this.snapshot.live,
         humans: this.snapshot.humans,
         members: this.snapshot.members,
+        memberIds: this.snapshot.memberIds ?? [],
+        rerun: this.snapshot.rerun ?? null,
+        // Combined audience (web stream + youtube); player shows this number.
+        listeners: this.listeners?.total ?? null,
+        sources: { web: this.listeners?.web ?? null, youtube: this.listeners?.youtube ?? null },
         updated: new Date().toISOString(),
       },
       null,

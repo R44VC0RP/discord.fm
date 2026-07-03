@@ -27,6 +27,11 @@ export function buildFfmpegArgs(): string[] {
     '-f', 's16le', '-ar', '48000', '-ac', '2', '-i', 'pipe:0',
   ];
 
+  // Two outputs off the same processed audio: icecast (the station) and a
+  // second mp3 stream on stdout that feeds the in-memory /clip ring buffer.
+  let icecastMap: string[];
+  let clipMap: string[];
+
   if (config.radio.preset === 'am') {
     const { lowcutHz, highcutHz, noiseLevel, flutterHz, flutterDepth } = config.radio.am;
     // Input 1: pink-noise static bed.
@@ -50,15 +55,18 @@ export function buildFfmpegArgs(): string[] {
     ].join(',');
     args.push(
       '-filter_complex',
-      `[0:a]${voiceChain}[voice];[voice][1:a]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95[out]`,
-      '-map', '[out]',
-      '-ac', '1',
+      `[0:a]${voiceChain}[voice];[voice][1:a]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95,asplit=2[out][clip]`,
     );
+    icecastMap = ['-map', '[out]', '-ac', '1'];
+    clipMap = ['-map', '[clip]', '-ac', '1'];
   } else {
-    args.push('-map', '0:a', '-ac', '2');
+    icecastMap = ['-map', '0:a', '-ac', '2'];
+    clipMap = ['-map', '0:a', '-ac', '2'];
   }
 
+  // Output 0: the station mount.
   args.push(
+    ...icecastMap,
     '-c:a', 'libmp3lame',
     '-b:a', config.radio.bitrate,
     '-content_type', 'audio/mpeg',
@@ -69,6 +77,15 @@ export function buildFfmpegArgs(): string[] {
     icecastUrl(),
   );
 
+  // Output 1: identical mp3 on stdout for the clip ring buffer.
+  args.push(
+    ...clipMap,
+    '-c:a', 'libmp3lame',
+    '-b:a', config.radio.bitrate,
+    '-f', 'mp3',
+    'pipe:1',
+  );
+
   return args;
 }
 
@@ -77,6 +94,9 @@ export class Encoder {
   private stopping = false;
   private respawnTimer: NodeJS.Timeout | null = null;
   private lastFailureLog = 0;
+
+  /** Receives the aired mp3 (post AM chain) chunk-by-chunk; feeds /clip. */
+  onMp3: ((chunk: Buffer) => void) | null = null;
 
   start(): void {
     this.stopping = false;
@@ -111,11 +131,15 @@ export class Encoder {
 
   private spawnChild(): void {
     const args = buildFfmpegArgs();
-    const child = spawn('ffmpeg', args, { stdio: ['pipe', 'ignore', 'pipe'] });
+    const child = spawn('ffmpeg', args, { stdio: ['pipe', 'pipe', 'pipe'] });
     this.child = child;
 
     child.stdin.on('error', () => {
       // Swallow EPIPE writes racing the process exit.
+    });
+
+    child.stdout!.on('data', (chunk: Buffer) => {
+      this.onMp3?.(chunk);
     });
 
     let stderrTail = '';

@@ -26,6 +26,16 @@
         <port>8000</port>
     </listen-socket>
 
+    <!-- Seamless source failover: when the bot's encoder drops (redeploys),
+         listeners are moved to a looping AM-static file instead of being
+         disconnected, and moved back when the source returns. This keeps
+         web listeners, the TV encoder, and in-progress recordings alive. -->
+    <mount type="normal">
+        <mount-name>/radio</mount-name>
+        <fallback-mount>/station/fallback.mp3</fallback-mount>
+        <fallback-override>1</fallback-override>
+    </mount>
+
     <http-headers>
         <header name="Access-Control-Allow-Origin" value="*" />
     </http-headers>
@@ -37,8 +47,9 @@
         <logdir>/var/log/icecast2</logdir>
         <webroot>/usr/share/icecast2/web</webroot>
         <adminroot>/usr/share/icecast2/admin</adminroot>
-        <!-- Root serves the station player. -->
-        <alias source="/" destination="/station/player.html"/>
+        <!-- Root serves the skin-of-the-day (written by the bot's rotation). -->
+        <alias source="/" destination="/station/current.html"/>
+        <alias source="/og.png" destination="/station/og.png"/>
     </paths>
 
     <logging>

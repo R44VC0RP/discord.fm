@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>anomaly.fm — control room</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Pixelify+Sans:wght@600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #d9c3a9; --cream: #efe0cc; --teal: #57b7b0; --teal-deep: #3e968f;
+    --ink: #17140f; --ink-soft: #2a241c; --cream-dim: #b39d80; --brown-dim: #8a7458;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100dvh; background: var(--paper); color: var(--ink);
+    font-family: "Inter", system-ui, -apple-system, sans-serif;
+    padding: 28px 20px 60px;
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { max-width: 900px; margin: 0 auto; }
+  /* Wordmark keeps the station's pixel identity; everything else is Inter. */
+  h1 {
+    font-family: "Pixelify Sans", monospace;
+    font-size: 1.4rem; letter-spacing: .2em; display: flex; align-items: center; gap: 14px;
+  }
+  h1 .chip { width: 22px; height: 22px; background: var(--teal); border-radius: 5px; }
+  h1 small { font-family: "Inter", sans-serif; font-size: .68rem; font-weight: 600; color: var(--brown-dim); letter-spacing: .18em; }
+  section {
+    background: var(--cream); border-radius: 18px; padding: 18px 20px; margin-top: 18px;
+    box-shadow: 0 10px 26px rgba(37,26,14,.22);
+  }
+  h2 { font-size: .72rem; font-weight: 700; letter-spacing: .14em; margin: 0 0 12px; color: var(--ink-soft); }
+  .now { background: var(--ink); color: var(--cream); }
+  .now h2 { color: var(--cream-dim); }
+  .now button { color: var(--cream); border-color: #4a4436; }
+  .now button:hover { background: var(--teal-deep); border-color: var(--teal-deep); }
+  .now .line { font-size: 1.05rem; font-weight: 600; color: var(--teal); }
+  .now .sub { font-size: .8rem; color: var(--cream-dim); margin-top: 6px; }
+  table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+  th { text-align: left; font-size: .68rem; font-weight: 600; letter-spacing: .1em; color: var(--brown-dim); padding: 4px 8px; }
+  td { padding: 7px 8px; border-top: 1px solid rgba(138,116,88,.25); vertical-align: middle; }
+  button {
+    font: inherit; font-size: .74rem; font-weight: 600; letter-spacing: .04em; cursor: pointer;
+    color: var(--ink); background: transparent; border: 1px solid var(--brown-dim);
+    border-radius: 6px; padding: .32rem .75rem; margin-right: 4px;
+  }
+  button:hover { background: var(--teal); border-color: var(--teal-deep); }
+  button.danger:hover { background: #c96a4a; border-color: #a04c30; }
+  button.primary { background: var(--ink); color: var(--cream); border-color: var(--ink); }
+  button.primary:hover { background: var(--teal-deep); }
+  .muted { color: var(--brown-dim); font-size: .78rem; }
+  .active { color: var(--teal-deep); font-weight: 700; }
+
+  /* bottom dock player (shared preview for recordings/voicemails/music) */
+  #dock {
+    position: fixed; left: 50%; transform: translateX(-50%); bottom: 14px;
+    width: min(860px, 94vw); display: none; align-items: center; gap: 12px;
+    background: var(--ink); color: var(--cream);
+    border-radius: 12px; padding: 10px 14px;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, .45); z-index: 50;
+  }
+  #dock.show { display: flex; }
+  #dock button { color: var(--cream); border-color: #4a4436; margin: 0; }
+  #dock button:hover { background: var(--teal-deep); }
+  #dock .title { font-size: .78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+  #dock input[type="range"] { flex: 1; accent-color: var(--teal); height: 4px; margin: 0; }
+  #dock .time { font-size: .72rem; color: var(--cream-dim); white-space: nowrap; }
+  body:has(#dock.show) main { padding-bottom: 70px; }
+  .row-flex { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  input[type="file"] { font-size: .78rem; }
+  #toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--cream); padding: .5rem 1.1rem; border-radius: 8px; font-size: .8rem; opacity: 0; transition: opacity .3s; pointer-events: none; }
+  #toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<main>
+  <h1><span class="chip"></span>ANOMALY.FM <small>CONTROL ROOM</small></h1>
+
+  <section class="now">
+    <h2>NOW</h2>
+    <div class="line" id="nowLine">connecting&hellip;</div>
+    <div class="sub" id="nowSub"></div>
+    <div class="row-flex" style="margin-top:12px">
+      <button id="announceBtn" title="fire an AI time check now">&#128226; FIRE TIME CHECK</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>HOTLINE &mdash; (361) 266-6259</h2>
+    <div class="muted" id="vmQueueInfo" style="margin-bottom:10px"></div>
+    <table id="vmTable">
+      <thead><tr><th>RECEIVED</th><th>FROM</th><th>LENGTH</th><th>SIZE</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <details style="margin-top:12px">
+      <summary class="muted" style="cursor:pointer">archived messages</summary>
+      <table id="vmArchTable" style="margin-top:8px"><tbody></tbody></table>
+    </details>
+  </section>
+
+  <section>
+    <h2>RERUN QUEUE</h2>
+    <div class="row-flex" style="margin-bottom:10px">
+      <button id="autoBtn">AUTO: ?</button>
+      <button id="skipBtn">SKIP CURRENT</button>
+      <span class="muted" id="pausedInfo"></span>
+    </div>
+    <table id="queueTable"><tbody></tbody></table>
+  </section>
+
+  <section>
+    <h2>ARCHIVE</h2>
+    <table id="recTable">
+      <thead><tr><th>SESSION</th><th>WHO</th><th>LENGTH</th><th>SIZE</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>MUSIC BED</h2>
+    <table id="musicTable"><tbody></tbody></table>
+    <div class="row-flex" style="margin-top:12px">
+      <input type="file" id="uploadFile" accept=".mp3,audio/mpeg">
+      <button class="primary" id="uploadBtn">UPLOAD TRACK</button>
+      <span class="muted">mp3 only; becomes selectable immediately</span>
+    </div>
+  </section>
+</main>
+
+<div id="dock">
+  <button id="dockBtn" title="play/pause">&#9654;&#65039;</button>
+  <span class="title" id="dockTitle"></span>
+  <input type="range" id="dockSeek" min="0" max="1000" value="0">
+  <span class="time" id="dockTime">0:00 / 0:00</span>
+  <button id="dockClose" title="close">&#10060;</button>
+</div>
+
+<div id="toast"></div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  let state = null;
+
+  const toast = (msg) => {
+    const el = $('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    setTimeout(() => el.classList.remove('show'), 2200);
+  };
+
+  // --- shared preview player (bottom dock) ---
+  const pa = new Audio();
+  let previewKey = null;
+  const fmtT = (s) => { s = Math.floor(s || 0); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+  const updatePreviewButtons = () => {
+    document.querySelectorAll('[data-prev]').forEach((b) => {
+      b.textContent = (b.dataset.prev === previewKey && !pa.paused) ? '\u23F8\uFE0F' : '\u25B6\uFE0F';
+    });
+    $('dockBtn').textContent = pa.paused ? '\u25B6\uFE0F' : '\u23F8\uFE0F';
+  };
+  const openPreview = (url, title) => {
+    if (previewKey === url) { pa.paused ? pa.play() : pa.pause(); return; }
+    previewKey = url;
+    pa.src = url;
+    pa.play().catch(() => toast('playback failed'));
+    $('dockTitle').textContent = title || '';
+    $('dock').classList.add('show');
+    updatePreviewButtons();
+  };
+  const closePreview = () => {
+    pa.pause();
+    pa.removeAttribute('src');
+    previewKey = null;
+    $('dock').classList.remove('show');
+    updatePreviewButtons();
+  };
+  pa.addEventListener('play', updatePreviewButtons);
+  pa.addEventListener('pause', updatePreviewButtons);
+  pa.addEventListener('ended', updatePreviewButtons);
+  pa.addEventListener('timeupdate', () => {
+    if (pa.duration) $('dockSeek').value = String((pa.currentTime / pa.duration) * 1000);
+    $('dockTime').textContent = fmtT(pa.currentTime) + ' / ' + fmtT(pa.duration);
+  });
+  $('dockSeek').addEventListener('input', () => { if (pa.duration) pa.currentTime = ($('dockSeek').value / 1000) * pa.duration; });
+  $('dockBtn').addEventListener('click', () => { if (previewKey) pa.paused ? pa.play() : pa.pause(); });
+  $('dockClose').addEventListener('click', closePreview);
+  const prevBtn = (url, title) =>
+    '<button data-prev="' + esc(url) + '" data-title="' + esc(title) + '" title="preview">\u25B6\uFE0F</button>';
+  const api = async (path, options) => {
+    const res = await fetch(path, options);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) { toast(body.error || ('error ' + res.status)); throw new Error(body.error || res.status); }
+    return body;
+  };
+
+  // --- archive mp4 renders: kick off, poll, then download ---
+  const mp4Poll = new Set();
+  const mp4Url = (f) => '/api/recordings/' + encodeURIComponent(f) + '/mp4';
+  async function requestMp4(file) {
+    const r = await api(mp4Url(file), { method: 'POST' }).catch(() => null);
+    if (!r) return;
+    if (r.status === 'ready') { window.location = mp4Url(file); return; }
+    if (r.status === 'busy') { toast('another mp4 is rendering \u2014 try again in a bit'); return; }
+    if (mp4Poll.has(file)) return;
+    mp4Poll.add(file);
+    toast('\u{1F3AC} rendering mp4\u2026');
+    render();
+    const tick = async () => {
+      if (!mp4Poll.has(file)) return;
+      try {
+        const s = await api(mp4Url(file) + '/status');
+        if (s.status === 'ready') {
+          mp4Poll.delete(file);
+          toast('\u2B07\uFE0F mp4 ready \u2014 downloading');
+          window.location = mp4Url(file);
+          refresh();
+          return;
+        }
+        if (s.status === 'error') { mp4Poll.delete(file); toast('mp4 failed: ' + (s.error || 'unknown')); render(); return; }
+      } catch { /* transient; keep polling */ }
+      setTimeout(tick, 3000);
+    };
+    setTimeout(tick, 3000);
+  }
+  const fmtDur = (s) => !s && s !== 0 ? '?' : Math.floor(s / 60) + 'm' + String(s % 60).padStart(2, '0') + 's';
+  const fmtSize = (b) => (b / 1048576).toFixed(1) + ' MB';
+  const esc = (t) => { const d = document.createElement('span'); d.textContent = t; return d.innerHTML; };
+  // "session-2026-07-02T18-54-33.mp3" -> "Jul 2 · 6:54 PM" (viewer's timezone)
+  const fmtSession = (name) => {
+    const m = String(name).match(/^(?:session|vm)-(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})/);
+    if (!m) return name;
+    const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]));
+    const part = String(name).match(/-part(\d+)\.mp3$/);
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' \u00b7 '
+      + d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+      + (part ? ' (part ' + part[1] + ')' : '');
+  };
+
+  function render() {
+    if (!state) return;
+    const bot = state.bot || {};
+    const snap = bot.snapshot || {};
+    const rerun = bot.rerun || { queue: [], auto: false };
+
+    // now
+    let line;
+    if (snap.humans > 0) line = 'ON AIR \u2014 ' + (snap.members || []).join(', ');
+    else if (rerun.playing) line = 'RERUN \u2014 ' + rerun.playing + ' @ ' + fmtDur(rerun.position);
+    else if (snap.live) line = 'INTERMISSION \u2014 music through the static';
+    else line = 'OFF AIR';
+    $('nowLine').textContent = line;
+    const L = bot.listeners || {};
+    $('nowSub').textContent =
+      'music: ' + ((bot.music && bot.music.state) || '?') + ' (' + ((bot.music && bot.music.track) || 'none') + ')'
+      + ' \u00b7 listeners: ' + (L.total ?? '?')
+      + ' (web ' + (L.web ?? '?') + ' \u00b7 youtube ' + (L.youtube ?? '\u2013') + ')';
+
+    // rerun
+    $('autoBtn').textContent = '\u{1F501} AUTO: ' + (rerun.auto ? 'ON' : 'OFF');
+    $('skipBtn').textContent = '\u23ED\uFE0F SKIP CURRENT';
+    $('uploadBtn').textContent = '\u2B06\uFE0F UPLOAD TRACK';
+    const bits = [];
+    if (rerun.paused) bits.push('paused: ' + fmtSession(rerun.paused.file) + ' @ ' + fmtDur(rerun.paused.offset));
+    if (rerun.nextUp) bits.push('next: ' + fmtSession(rerun.nextUp) + (rerun.waitSeconds > 0 ? ' in ' + Math.ceil(rerun.waitSeconds / 60) + 'm' : ' (due)'));
+    if (rerun.cycle && rerun.cycle.total) bits.push('cycle: ' + rerun.cycle.played + '/' + rerun.cycle.total + ' aired');
+    $('pausedInfo').textContent = bits.join(' \u00b7 ');
+    $('queueTable').querySelector('tbody').innerHTML = rerun.queue.length
+      ? rerun.queue.map((f, i) =>
+          '<tr><td>' + (i + 1) + '. ' + esc(fmtSession(f)) + '</td><td style="text-align:right"><button data-unqueue="' + i + '" title="remove from queue">\u2796 REMOVE</button></td></tr>').join('')
+      : '<tr><td class="muted">queue empty' + (rerun.auto ? ' \u2014 rotation plays the oldest unaired session' : '') + '</td></tr>';
+
+    // hotline
+    const vms = state.voicemails || [];
+    const vmQ = (bot.voicemails && bot.voicemails.queue) || [];
+    $('vmQueueInfo').textContent = (bot.voicemails && bot.voicemails.airing ? 'AIRING NOW \u00b7 ' : '')
+      + (vmQ.length ? 'on-air queue: ' + vmQ.map(fmtSession).join(', ') : 'on-air queue empty')
+      + ' \u00b7 ' + vms.filter((v) => !(v.meta && v.meta.archived)).length + ' in inbox';
+    const maskFrom = (f) => {
+      const digits = String(f || '').replace(/\D/g, '');
+      return digits.length >= 4 ? '\u2022\u2022\u2022-' + digits.slice(-4) : (f || 'unknown');
+    };
+    const vmRow = (v, archived) =>
+      '<tr><td title="' + esc(v.file) + '">' + esc(fmtSession(v.file)) + '</td>'
+      + '<td class="muted">' + esc(maskFrom(v.meta && v.meta.from)) + '</td>'
+      + '<td>' + (v.meta && v.meta.durationSeconds ? fmtDur(v.meta.durationSeconds) : '?') + '</td>'
+      + '<td>' + fmtSize(v.bytes) + '</td>'
+      + '<td style="text-align:right;white-space:nowrap">'
+      + prevBtn('/api/voicemails/' + encodeURIComponent(v.file) + '/audio', 'voicemail \u00b7 ' + fmtSession(v.file))
+      + '<button data-vmair="' + esc(v.file) + '" title="queue on air">\u{1F4E1} AIR</button>'
+      + (archived
+          ? '<button data-vmarch="' + esc(v.file) + '" data-flag="false" title="restore">\u21A9\uFE0F</button><button class="danger" data-vmdel="' + esc(v.file) + '" title="delete forever">\u{1F5D1}\uFE0F</button>'
+          : '<button data-vmarch="' + esc(v.file) + '" data-flag="true" title="archive">\u{1F5C4}\uFE0F</button>')
+      + '</td></tr>';
+    const inbox = vms.filter((v) => !(v.meta && v.meta.archived));
+    const archived = vms.filter((v) => v.meta && v.meta.archived);
+    $('vmTable').querySelector('tbody').innerHTML =
+      inbox.map((v) => vmRow(v, false)).join('') || '<tr><td class="muted" colspan="5">no messages yet \u2014 call the hotline</td></tr>';
+    $('vmArchTable').querySelector('tbody').innerHTML =
+      archived.map((v) => vmRow(v, true)).join('') || '<tr><td class="muted">nothing archived</td></tr>';
+
+    // archive
+    $('recTable').querySelector('tbody').innerHTML = (state.recordings || []).map((r) => {
+      const who = r.meta && r.meta.members ? r.meta.members.join(', ') : (r.meta ? '' : 'recording\u2026');
+      const len = r.meta ? fmtDur(r.meta.durationSeconds) : '';
+      return '<tr><td title="' + esc(r.file) + '">' + esc(fmtSession(r.file)) + '</td><td class="muted">' + esc(who) + '</td><td>' + len + '</td><td>' + fmtSize(r.bytes) + '</td>'
+        + '<td style="text-align:right;white-space:nowrap">'
+        + prevBtn('/api/recordings/' + encodeURIComponent(r.file) + '/audio', 'session \u00b7 ' + fmtSession(r.file))
+        + '<button data-mp4="' + esc(r.file) + '" title="' + (r.mp4 ? 'download mp4' : 'render + download mp4') + '">'
+        + (mp4Poll.has(r.file) ? '\u23F3 MP4' : (r.mp4 ? '\u2B07\uFE0F MP4' : '\u{1F3AC} MP4')) + '</button>'
+        + '<button data-cue="' + esc(r.file) + '" title="cue rerun">\u2795 CUE</button>'
+        + '<button class="danger" data-del="' + esc(r.file) + '" title="delete">\u{1F5D1}\uFE0F</button></td></tr>';
+    }).join('') || '<tr><td class="muted">no recordings yet</td></tr>';
+
+    // music
+    const active = bot.music && bot.music.track;
+    $('musicTable').querySelector('tbody').innerHTML = (state.music || []).map((m) =>
+      '<tr><td' + (m.file === active ? ' class="active"' : '') + '>' + esc(m.file) + (m.file === active ? ' \u2190 active' : '') + '</td>'
+      + '<td>' + fmtSize(m.bytes) + '</td><td style="text-align:right;white-space:nowrap">'
+      + prevBtn('/api/music/' + encodeURIComponent(m.file) + '/audio', 'bed \u00b7 ' + m.file)
+      + (m.file === active ? '' : '<button data-activate="' + esc(m.file) + '" title="make active bed">\u2705 ACTIVATE</button><button class="danger" data-delmusic="' + esc(m.file) + '" title="delete">\u{1F5D1}\uFE0F</button>')
+      + '</td></tr>').join('') || '<tr><td class="muted">no tracks</td></tr>';
+    updatePreviewButtons();
+  }
+
+  async function refresh() {
+    try { state = await api('/api/state'); render(); } catch { /* toast already shown */ }
+  }
+
+  document.body.addEventListener('click', async (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    const d = b.dataset;
+    if (d.prev) { openPreview(d.prev, d.title); return; }
+    if (b.id === 'announceBtn') {
+      toast('generating time check\u2026');
+      let r = await api('/api/announce', { method: 'POST', body: JSON.stringify({ force: false }) });
+      if (!r.fired && /live/.test(r.reason || '') && confirm('Live show on air \u2014 force the time check over it?')) {
+        r = await api('/api/announce', { method: 'POST', body: JSON.stringify({ force: true }) });
+      }
+      toast(r.fired ? '\u{1F4E2} time check airing' : 'skipped: ' + (r.reason || 'unknown'));
+      return;
+    }
+    if (b.id === 'autoBtn') await api('/api/rerun/auto', { method: 'POST', body: JSON.stringify({ enabled: !(state.bot.rerun || {}).auto }) });
+    else if (b.id === 'skipBtn') await api('/api/rerun/skip', { method: 'POST' });
+    else if (d.mp4) { requestMp4(d.mp4); return; }
+    else if (d.cue) { await api('/api/rerun/queue', { method: 'POST', body: JSON.stringify({ file: d.cue }) }); toast('cued ' + fmtSession(d.cue)); }
+    else if (d.unqueue !== undefined) await api('/api/rerun/unqueue', { method: 'POST', body: JSON.stringify({ index: Number(d.unqueue) }) });
+    else if (d.vmair) { const r = await api('/api/voicemail/play', { method: 'POST', body: JSON.stringify({ file: d.vmair }) }); toast('queued on air (#' + r.queued + ')'); }
+    else if (d.vmarch) { await api('/api/voicemails/' + encodeURIComponent(d.vmarch) + '/archive', { method: 'POST', body: JSON.stringify({ archived: d.flag === 'true' }) }); toast(d.flag === 'true' ? 'archived' : 'restored'); }
+    else if (d.vmdel) { if (!confirm('Delete this voicemail forever?')) return; await api('/api/voicemails/' + encodeURIComponent(d.vmdel), { method: 'DELETE' }); toast('deleted'); }
+    else if (d.del) { if (!confirm('Delete ' + d.del + '?')) return; await api('/api/recordings/' + encodeURIComponent(d.del), { method: 'DELETE' }); toast('deleted'); }
+    else if (d.activate) { await api('/api/music/track', { method: 'POST', body: JSON.stringify({ file: d.activate }) }); toast('bed switched'); }
+    else if (d.delmusic) { if (!confirm('Delete ' + d.delmusic + '?')) return; await api('/api/music/' + encodeURIComponent(d.delmusic), { method: 'DELETE' }); toast('deleted'); }
+    else if (b.id === 'uploadBtn') {
+      const f = $('uploadFile').files[0];
+      if (!f) return toast('choose a file first');
+      const name = f.name.replace(/[^\w.-]+/g, '_');
+      toast('uploading\u2026');
+      await api('/api/music/upload?name=' + encodeURIComponent(name), { method: 'PUT', body: f });
+      toast('uploaded ' + name);
+    }
+    refresh();
+  });
+
+  refresh();
+  setInterval(refresh, 5000);
+})();
+</script>
+</body>
+</html>

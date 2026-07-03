@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>anomaly.fm tv art source (1280x720)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400..700&family=Inter:wght@600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #d9c3a9; --cream: #efe0cc; --teal: #57b7b0; --teal-deep: #3e968f;
+    --ink: #17140f; --ink-soft: #2a241c; --cream-dim: #b39d80; --brown-dim: #8a7458;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    width: 1280px; height: 720px; overflow: hidden;
+    background: var(--paper);
+    font-family: "Pixelify Sans", ui-monospace, monospace;
+    color: var(--ink);
+    -webkit-font-smoothing: none;
+    position: relative;
+  }
+
+  /* left column: wordmark up top; the area below stays empty for the live
+     waveform overlay (x=96 y=470 520x150) and drawtext status line (y~648). */
+  .left { position: absolute; left: 96px; top: 120px; width: 620px; }
+  .mark { display: flex; align-items: center; gap: 24px; }
+  .mark .chip { width: 40px; height: 40px; background: var(--teal); border-radius: 8px; }
+  .mark h1 { font-size: 84px; font-weight: 700; letter-spacing: .02em; }
+  .tag { margin-top: 22px; font-size: 24px; letter-spacing: .16em; color: var(--ink-soft); }
+  .sub { margin-top: 16px; font-size: 19px; letter-spacing: .14em; color: var(--brown-dim); }
+  .callin {
+    margin-top: 24px; display: inline-flex; align-items: center; gap: 12px;
+    background: var(--ink); color: var(--cream);
+    border-radius: 12px; padding: 11px 20px; font-size: 21px; letter-spacing: .1em;
+  }
+  .callin .ring { width: 13px; height: 13px; border-radius: 50%; background: var(--teal); }
+  .callin b {
+    color: var(--teal);
+    font-family: "Inter", system-ui, sans-serif;
+    font-weight: 700; font-size: 20px; letter-spacing: .04em;
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* right: the receiver */
+  .device {
+    position: absolute; right: 96px; top: 50%; transform: translateY(-50%);
+    width: 348px;
+    background: var(--cream); border-radius: 34px; padding: 16px 16px 20px;
+    box-shadow: 0 24px 60px rgba(37, 26, 14, .35);
+  }
+  .grille {
+    height: 86px; border-radius: 22px 22px 10px 10px;
+    background-color: var(--teal);
+    background-image: radial-gradient(circle, rgba(15, 12, 8, .62) 2.1px, transparent 2.7px);
+    background-size: 10px 10px; background-position: center;
+  }
+  .card { background: var(--ink); color: var(--cream); border-radius: 16px; margin-top: 12px; padding: 12px 14px 10px; }
+  .card .row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+  .card .title { font-size: 17px; font-weight: 700; margin-bottom: 6px; }
+  .card .title .glyph { color: var(--teal); margin-right: 8px; }
+  .card .mid { font-size: 13px; color: var(--teal); }
+  .card .sub2 { font-size: 11px; color: var(--cream-dim); margin-top: 3px; }
+  .dial-wrap { display: grid; place-items: center; padding: 22px 0 6px; }
+  .dial { position: relative; width: 226px; aspect-ratio: 1; border-radius: 50%; background: var(--ink); }
+  .dial .num { position: absolute; left: 50%; top: 50%; color: var(--cream); font-size: 11px; letter-spacing: .05em; opacity: .92; }
+  .knob {
+    position: absolute; inset: 35px; border-radius: 50%;
+    background: var(--teal); box-shadow: inset 0 -6px 0 rgba(23, 20, 15, .14);
+    transform: rotate(142deg);
+  }
+  .knob .dot { position: absolute; top: 15px; left: 50%; margin-left: -9px; width: 18px; height: 18px; border-radius: 50%; background: var(--teal-deep); }
+  .vol { position: relative; margin: 20px 22px 4px; height: 28px; }
+  .vol .track { position: absolute; left: 0; right: 0; top: 13px; height: 3px; border-radius: 2px; background: var(--ink-soft); }
+  .vol .thumb { position: absolute; left: 78%; top: 0; width: 19px; height: 28px; border-radius: 7px; background: var(--ink); }
+  .foot { display: flex; align-items: center; justify-content: center; gap: 9px; font-size: 12px; letter-spacing: .06em; margin-top: 8px; }
+  .foot .livedot { width: 11px; height: 11px; border-radius: 50%; background: var(--teal-deep); }
+  .signal { text-align: center; font-size: 10px; color: var(--brown-dim); letter-spacing: .12em; margin-top: 4px; }
+</style>
+</head>
+<body>
+  <div class="left">
+    <div class="mark"><span class="chip"></span><h1>ANOMALY.FM</h1></div>
+    <div class="tag">LIVE AM RADIO FROM A DISCORD VOICE CHANNEL</div>
+    <div class="sub">610 kHz AM &middot; anomaly.fm</div>
+    <div class="callin"><span class="ring"></span>CALL IN &middot; <b>(361) 266-6259</b></div>
+  </div>
+
+  <div class="device">
+    <div class="grille"></div>
+    <section class="card">
+      <div class="title"><span class="glyph">&#9632;</span>ANOMALY.FM</div>
+      <div class="row mid"><span>music through the static</span></div>
+      <div class="row sub2"><span>transmitting from the anomaly</span><span>610 kHz AM</span></div>
+    </section>
+    <div class="dial-wrap">
+      <div class="dial" id="dial">
+        <span class="knob"><span class="dot"></span></span>
+      </div>
+    </div>
+    <div class="vol"><div class="track"></div><div class="thumb"></div></div>
+    <div class="foot"><span class="livedot"></span>LIVE 24/7</div>
+    <div class="signal">RECEIVING</div>
+  </div>
+
+<script>
+  const dial = document.getElementById('dial');
+  const NUMBERS = [54, 60, 70, 80, 100, 120, 140, 160];
+  NUMBERS.forEach((n, i) => {
+    const angle = -132 + (264 / (NUMBERS.length - 1)) * i;
+    const span = document.createElement('span');
+    span.className = 'num';
+    span.textContent = n;
+    span.style.transform = 'translate(-50%, -50%) rotate(' + angle + 'deg) translateY(-96px)';
+    dial.appendChild(span);
+  });
+</script>
+</body>
+</html>

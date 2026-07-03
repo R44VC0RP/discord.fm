@@ -1,0 +1,9 @@
+{
+  "name": "anomalyfm-og",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "satori": "^0.12.2"
+  }
+}

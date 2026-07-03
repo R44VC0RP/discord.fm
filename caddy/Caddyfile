@@ -1,0 +1,40 @@
+# Host router on the single public port. exe.dev terminates TLS upstream and
+# routes every registered domain here; we split by Host header.
+# Keep this file boring: restarting caddy drops live listeners.
+{
+	auto_https off
+}
+
+:8000 {
+	@admin host {$ADMIN_DOMAIN}
+	handle @admin {
+		basic_auth {
+			admin {$ADMIN_PASSWORD_HASH}
+		}
+		reverse_proxy admin:8091
+	}
+
+	# Twilio hotline webhooks land on the public station host; the admin app
+	# authenticates them with Twilio's request signature (no basic auth here).
+	handle /call/* {
+		reverse_proxy admin:8091
+	}
+
+	# OG image is re-rendered as on-air state changes; replace icecast's
+	# no-cache with a short TTL so crawlers refetch but don't hammer.
+	handle /og.png {
+		reverse_proxy icecast:8000 {
+			# Set (not add) replaces icecast's Cache-Control; drop Pragma too.
+			header_down Cache-Control "public, max-age=60"
+			header_down -Pragma
+		}
+	}
+
+	# Everything else (anomaly.fm, www, the exe.xyz hostname) is the station.
+	handle {
+		reverse_proxy icecast:8000 {
+			# Stream bytes through immediately; never buffer the radio.
+			flush_interval -1
+		}
+	}
+}

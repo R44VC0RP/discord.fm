@@ -13,9 +13,13 @@
 
 import {
   EndBehaviorType,
+  NoSubscriberBehavior,
   VoiceConnectionStatus,
+  createAudioPlayer,
+  createAudioResource,
   entersState,
   joinVoiceChannel,
+  type AudioPlayer,
   type VoiceConnection,
 } from '@discordjs/voice';
 import type { Client, VoiceBasedChannel } from 'discord.js';
@@ -39,6 +43,18 @@ export class RadioVoice {
 
   /** Invoked after joining/leaving a channel so occupancy-driven state can sync. */
   onPresenceChange?: () => void;
+
+  private player: AudioPlayer | null = null;
+
+  /** Play an audio file into the channel (live hosts hear voicemails etc.). */
+  playFile(path: string): void {
+    if (!this.connection) return;
+    if (!this.player) {
+      this.player = createAudioPlayer({ behaviors: { noSubscriber: NoSubscriberBehavior.Play } });
+    }
+    this.connection.subscribe(this.player);
+    this.player.play(createAudioResource(path));
+  }
 
   constructor(
     private readonly client: Client,
@@ -121,6 +137,20 @@ export class RadioVoice {
     this.teardown();
     this.channel = null;
     this.onPresenceChange?.();
+  }
+
+  /** Full reconnect (leave + instant rejoin) to shake off any staleness. */
+  async refresh(): Promise<void> {
+    const channel = this.channel;
+    if (!this.connection || !channel) return;
+    console.log('[voice] periodic refresh: reconnecting');
+    this.teardown();
+    try {
+      await this.join(channel);
+    } catch (error) {
+      console.error('[voice] refresh rejoin failed:', error instanceof Error ? error.message : error);
+      this.scheduleRejoin();
+    }
   }
 
   private scheduleRejoin(): void {

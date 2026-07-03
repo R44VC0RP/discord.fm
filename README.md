@@ -64,15 +64,10 @@ put TLS in front of Icecast. Either:
 
 ### 5. The player
 
-There are two deployments of the same player (`web/player.html` is the single
-source; it targets `window.STATION_ORIGIN || same-origin`):
-
-- **Station origin**: served by Icecast at `/` (directory-mounted; player
-  edits apply on the next request, no restart)
-- **Cloudflare Worker** (optional): `worker/` is an assets-only Worker. After
-  editing `web/player.html`, regenerate `worker/public/index.html` (copy it and
-  inject `<script>window.STATION_ORIGIN = "https://your-station-host";</script>`
-  before the main script), then `cd worker && npx wrangler deploy`.
+`web/player.html` is served by Icecast at `/` (directory-mounted, so player
+edits apply on the next request — no restart). It talks to the stream and
+status endpoints on its own origin. To host the player elsewhere, set
+`window.STATION_ORIGIN = "https://your-station-host"` before the main script.
 
 `https://<host>/` serves a minimal station player (`web/player.html`, aliased
 by Icecast): tune in/out, on-air status with member names, and receiver count.

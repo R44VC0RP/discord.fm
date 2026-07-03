@@ -7,8 +7,12 @@ import {
   type ChatInputCommandInteraction,
   type VoiceBasedChannel,
 } from 'discord.js';
+import { join } from 'node:path';
+import { CLIP_MAX_S, CLIP_MIN_S, clipRenderBusy, renderClip, type ClipBuffer } from './clip.js';
 import { config } from './config.js';
 import type { Encoder } from './encoder.js';
+import { onAirLine, type PresenceSnapshot } from './feed.js';
+import { hotlineLabel, listInbox } from './hotline.js';
 import type { Mixer } from './mixer.js';
 import type { RadioVoice } from './voice.js';
 
@@ -31,27 +35,140 @@ export const radioCommand = new SlashCommandBuilder()
   .addSubcommand((sub) => sub.setName('leave').setDescription('Take the channel off air (stream keeps playing static)'))
   .addSubcommand((sub) => sub.setName('status').setDescription('Broadcast status'));
 
-interface IcecastSource {
-  listenurl?: string;
-  listeners?: number;
+import { fetchAllListeners } from './listeners.js';
+
+export const hotlineCommand = new SlashCommandBuilder()
+  .setName('hotline')
+  .setDescription(`${config.station.name} hotline inbox`)
+  .setContexts(InteractionContextType.Guild)
+  .addSubcommand((sub) => sub.setName('list').setDescription('List hotline messages'))
+  .addSubcommand((sub) =>
+    sub
+      .setName('play')
+      .setDescription('Preview a message here in Discord (not on air)')
+      .addIntegerOption((o) =>
+        o.setName('number').setDescription('message number from /hotline list').setRequired(true).setMinValue(1),
+      ),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName('air')
+      .setDescription('Broadcast a message on the station')
+      .addIntegerOption((o) =>
+        o.setName('number').setDescription('message number from /hotline list').setRequired(true).setMinValue(1),
+      ),
+  );
+
+export const clipCommand = new SlashCommandBuilder()
+  .setName('clip')
+  .setDescription('Clip the last moments of the broadcast as a shareable video')
+  .setContexts(InteractionContextType.Guild)
+  .addIntegerOption((o) =>
+    o
+      .setName('seconds')
+      .setDescription(`How far back to clip, ${CLIP_MIN_S}-${CLIP_MAX_S} (default 30)`)
+      .setMinValue(CLIP_MIN_S)
+      .setMaxValue(CLIP_MAX_S),
+  );
+
+export async function handleClipCommand(
+  interaction: ChatInputCommandInteraction,
+  clipBuffer: ClipBuffer,
+  getSnapshot: () => PresenceSnapshot,
+): Promise<void> {
+  if (clipRenderBusy()) {
+    await interaction.reply({
+      content: '📼 the tape deck is busy with another clip — try again in a few seconds',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  const requested = interaction.options.getInteger('seconds') ?? 30;
+  const buffered = Math.floor(clipBuffer.bufferedSeconds());
+  if (buffered < CLIP_MIN_S) {
+    await interaction.reply({
+      content: `📼 the tape is still warming up (${buffered}s buffered) — try again shortly`,
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  const seconds = Math.min(requested, buffered);
+
+  await interaction.deferReply();
+
+  const when = new Intl.DateTimeFormat('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZone: config.station.timeZone,
+  }).format(new Date());
+  const label = `${when} ET — ${onAirLine(getSnapshot())}`;
+
+  try {
+    const mp3 = clipBuffer.lastSeconds(seconds);
+    const clip = await renderClip(mp3, seconds, label);
+    try {
+      const stamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-');
+      const short = requested > seconds ? ` (only ${seconds}s on tape)` : '';
+      await interaction.editReply({
+        content: `📼 the last **${seconds}s** of ${config.station.name}${short} — call in: (361) 266-6259`,
+        files: [{ attachment: clip.path, name: `anomalyfm-clip-${stamp}-${seconds}s.mp4` }],
+      });
+    } finally {
+      await clip.cleanup();
+    }
+  } catch (error) {
+    console.error('[clip] failed:', error);
+    await interaction
+      .editReply(`📼 clip failed: ${error instanceof Error ? error.message : String(error)}`)
+      .catch(() => {});
+  }
 }
 
-async function fetchListeners(): Promise<number | null> {
-  try {
-    const response = await fetch(
-      `http://${config.icecast.host}:${config.icecast.port}/status-json.xsl`,
-      { signal: AbortSignal.timeout(2000) },
-    );
-    if (!response.ok) return null;
-    const stats = (await response.json()) as { icestats?: { source?: IcecastSource | IcecastSource[] } };
-    const source = stats.icestats?.source;
-    if (!source) return 0;
-    const sources = Array.isArray(source) ? source : [source];
-    const mount = config.icecast.mount.startsWith('/') ? config.icecast.mount : `/${config.icecast.mount}`;
-    const match = sources.find((entry) => entry.listenurl?.endsWith(mount));
-    return match?.listeners ?? 0;
-  } catch {
-    return null;
+export async function handleHotlineCommand(
+  interaction: ChatInputCommandInteraction,
+  radio: RadioVoice,
+  queueVoicemail: (file: string) => number,
+): Promise<void> {
+  const sub = interaction.options.getSubcommand();
+  const inbox = await listInbox();
+
+  if (sub === 'list') {
+    if (inbox.length === 0) {
+      await interaction.reply('hotline inbox is empty — call (361) 266-6259');
+      return;
+    }
+    const lines = inbox.slice(0, 10).map((item, i) => `**${i + 1}.** ${hotlineLabel(item)}`);
+    if (inbox.length > 10) lines.push(`…and ${inbox.length - 10} more in the control room`);
+    lines.push('`/hotline play N` preview here (not on air) · `/hotline air N` broadcast');
+    await interaction.reply({ content: lines.join('\n'), allowedMentions: { parse: [] } });
+    return;
+  }
+
+  const n = interaction.options.getInteger('number', true);
+  if (n < 1 || n > inbox.length) {
+    await interaction.reply({
+      content: inbox.length ? `pick 1–${inbox.length} (see \`/hotline list\`)` : 'inbox is empty',
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+  const item = inbox[n - 1]!;
+
+  if (sub === 'play') {
+    radio.playFile(join(config.voicemail.dir, item.file));
+    await interaction.reply({
+      content: `▶️ previewing **${n}.** ${hotlineLabel(item)} — Discord only, not on air`,
+      allowedMentions: { parse: [] },
+    });
+  } else if (sub === 'air') {
+    const position = queueVoicemail(item.file);
+    await interaction.reply({
+      content: `📡 queued on air (#${position}): ${hotlineLabel(item)}`,
+      allowedMentions: { parse: [] },
+    });
   }
 }
 
@@ -109,14 +226,14 @@ export async function handleRadioCommand(
 
   if (subcommand === 'status') {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    const listeners = await fetchListeners();
+    const listeners = await fetchAllListeners();
     const channel = radio.connectedChannel;
     const lines = [
       `station: **${config.station.name}** (\`${config.radio.preset}\` preset @ ${config.radio.bitrate})`,
       `voice: ${channel ? `live in ${channel}` : 'not connected (broadcasting the bed)'}`,
       `music: ${mixer.musicState}`,
       `encoder: ${encoder.running ? 'running' : 'down (respawning)'}`,
-      `listeners: ${listeners ?? 'unknown (icecast unreachable)'}`,
+      `listeners: ${listeners.total ?? 'unknown'} (web ${listeners.web ?? '?'}, youtube ${listeners.youtube ?? '–'})`,
     ];
     if (channel) {
       const speaking = new Set(radio.speakingUserIds);

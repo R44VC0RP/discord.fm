@@ -8,8 +8,12 @@ services:
       ICECAST_HOST: icecast
     volumes:
       - ./music:/music:ro
+      - ./recordings:/recordings:ro
+      - ./voicemails:/voicemails:ro
       # Activity feed files, served by icecast at /feed/.
       - ./feed:/feed
+      # Station web root: daily skin rotation writes current.html here.
+      - ./web:/web
     depends_on:
       - icecast
 
@@ -26,27 +30,111 @@ services:
       ICECAST_RELAY_PASSWORD: ${ICECAST_RELAY_PASSWORD:-}
       ICECAST_HOSTNAME: ${STREAM_DOMAIN:-localhost}
       ICECAST_MAX_CLIENTS: ${ICECAST_MAX_CLIENTS:-250}
-    ports:
-      - "8000:8000"
+    # No published port: caddy fronts the public port and routes by Host.
 
-  # Optional TLS terminator. Enable with: docker compose --profile tls up -d
-  # Skip it if the box already runs traefik/nginx/caddy -- just proxy to :8000.
+  # Host router: station domains -> icecast, ADMIN_DOMAIN -> control room.
   caddy:
     image: caddy:2
-    profiles: ["tls"]
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
+      - "8000:8000"
     environment:
-      STREAM_DOMAIN: ${STREAM_DOMAIN:?set it in .env}
+      ADMIN_DOMAIN: ${ADMIN_DOMAIN:-fm.anoma.ly}
+      ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:?generate with caddy hash-password}
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
+      # Directory mount: edit caddy/Caddyfile, then
+      # `docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile`
+      # for zero-downtime config changes.
+      - ./caddy:/etc/caddy:ro
+    depends_on:
+      - icecast
+      - admin
+
+  # Control room web app (auth handled by caddy; /call/* uses Twilio sigs).
+  admin:
+    build: ./admin
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      BOT_API: http://bot:8090
+    volumes:
+      - ./recordings:/recordings
+      - ./music:/music
+      - ./voicemails:/voicemails
+      # Clip art + font for archive mp4 renders (read-only).
+      - ./web:/web:ro
+    depends_on:
+      - bot
+
+  # Dynamic OG image: re-renders web/og.png (satori -> resvg, no browser)
+  # whenever on-air state or the day's skin changes. Independent of the
+  # audio path; restart-safe at any time.
+  og:
+    build: ./og
+    restart: unless-stopped
+    volumes:
+      - ./feed:/feed:ro
+      - ./web:/web
     depends_on:
       - icecast
 
-volumes:
-  caddy_data:
-  caddy_config:
+  # Session recorder: stream-copies the aired audio while humans are in the
+  # channel. Recordings land in ./recordings as mp3 + metadata json.
+  recorder:
+    build: ./recorder
+    restart: unless-stopped
+    environment:
+      RECORDING_STOP_DELAY_S: ${RECORDING_STOP_DELAY_S:-120}
+    volumes:
+      - ./feed:/feed:ro
+      - ./recordings:/recordings
+    depends_on:
+      - icecast
+
+  # 24/7 video encoder -> local relay. Enable with: docker compose --profile tv up -d
+  # Runs in its own container so bot redeploys never touch the outbound stream.
+  tv:
+    build: ./tv
+    restart: unless-stopped
+    profiles: ["tv"]
+    env_file: .env
+    volumes:
+      - ./feed:/feed:ro
+      - ./recordings:/out
+    depends_on:
+      - icecast
+      - mediamtx
+
+  # Local RTMP relay between the encoder and the platform pushers.
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    restart: unless-stopped
+    profiles: ["tv"]
+
+  # Per-platform pushers: stream-copy from the relay, independently
+  # restartable. push-x self-restarts daily (X's ~24h broadcast cap).
+  push-yt:
+    build: ./pusher
+    restart: unless-stopped
+    profiles: ["tv"]
+    environment:
+      LABEL: youtube
+      DEST_URL: ${YOUTUBE_STREAM_KEY:+${YOUTUBE_RTMP_URL:-rtmp://a.rtmp.youtube.com/live2}/${YOUTUBE_STREAM_KEY}}
+    depends_on:
+      - mediamtx
+
+  push-x:
+    build: ./pusher
+    restart: unless-stopped
+    profiles: ["tv"]
+    environment:
+      LABEL: x
+      DEST_URL: ${X_STREAM_KEY:+${X_RTMP_URL}/${X_STREAM_KEY}}
+      # X documents no duration cap for immediately-started broadcasts, so the
+      # daily restart is off by default; set X_RESTART_AT=02:00 to enable.
+      RESTART_AT: ${X_RESTART_AT:-}
+      RESTART_TZ: ${X_RESTART_TZ:-America/New_York}
+    depends_on:
+      - mediamtx
+
+
