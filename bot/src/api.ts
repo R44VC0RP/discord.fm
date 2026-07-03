@@ -5,6 +5,7 @@
  */
 
 import http from 'node:http';
+import type { AudienceSample } from './audience.js';
 import type { PresenceSnapshot } from './feed.js';
 import type { ListenerBreakdown } from './listeners.js';
 import type { Mixer } from './mixer.js';
@@ -15,6 +16,7 @@ export interface ApiDeps {
   rerun: RerunManager;
   getSnapshot: () => PresenceSnapshot;
   getListeners: () => Promise<ListenerBreakdown>;
+  getAudience: (hours: number) => AudienceSample[];
   getMusicTrack: () => string;
   setMusicTrack: (file: string) => Promise<void>;
   queueVoicemail: (file: string) => number;
@@ -41,6 +43,10 @@ export function startApi(deps: ApiDeps, port = 8090): void {
       const route = `${req.method} ${url.pathname}`;
 
       switch (route) {
+        case 'GET /audience': {
+          const hours = Math.min(Math.max(Number(url.searchParams.get('hours')) || 168, 1), 24 * 120);
+          return send(200, { samples: deps.getAudience(hours) });
+        }
         case 'GET /state':
           return send(200, {
             snapshot: deps.getSnapshot(),

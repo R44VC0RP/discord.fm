@@ -217,11 +217,11 @@ async function listVoicemails() {
   return items.sort((a, b) => b.file.localeCompare(a.file)); // newest first
 }
 
-async function botFetch(pathname, options) {
+async function botFetch(pathname, options, timeoutMs = 5000) {
   const res = await fetch(BOT_API + pathname, {
     ...options,
     headers: { 'content-type': 'application/json' },
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   return { status: res.status, body: await res.json() };
 }
@@ -360,6 +360,12 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true });
     }
 
+    if (req.method === 'GET' && p === '/api/audience') {
+      const hours = Number(url.searchParams.get('hours')) || 168;
+      const out = await botFetch(`/audience?hours=${hours}`);
+      return send(res, out.status, out.body);
+    }
+
     if (req.method === 'GET' && p === '/api/state') {
       const [bot, recordings, music, voicemails] = await Promise.all([
         botFetch('/state').catch(() => ({ status: 502, body: { error: 'bot unreachable' } })),
@@ -397,7 +403,8 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && p === '/api/announce') {
       const body = await readBody(req);
-      const out = await botFetch('/announce', { method: 'POST', body: body || '{}' });
+      // Script + TTS generation runs ~15-25s; don't abort under it.
+      const out = await botFetch('/announce', { method: 'POST', body: body || '{}' }, 45_000);
       return send(res, out.status, out.body);
     }
     if (req.method === 'POST' && p === '/api/voicemail/play') {

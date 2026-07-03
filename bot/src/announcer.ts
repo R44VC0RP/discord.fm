@@ -4,16 +4,19 @@
  * and aired through the mixer (bed/rerun duck under it, crackle applies).
  *
  * Script: Claude Haiku via opencode zen (Anthropic Messages API). Always
- * states the time in Eastern AND Pacific; may weave in one extra detail
- * (current rerun, audience size, or San Francisco weather). If the LLM is
+ * states the time in Eastern AND Pacific plus the weather in a rotating
+ * major city (shuffled deck, no repeats until the deck runs out); may weave
+ * in one extra detail (current rerun, audience size). If the LLM is
  * unreachable, a plain deterministic time check airs instead.
  */
 
 import { spawn } from 'node:child_process';
+import { join } from 'node:path';
 import { config } from './config.js';
 import type { PresenceSnapshot } from './feed.js';
 import type { ListenerBreakdown } from './listeners.js';
 import type { Mixer } from './mixer.js';
+import { CityDeck, fetchWeather } from './weather.js';
 
 interface AnnouncerDeps {
   mixer: Mixer;
@@ -25,7 +28,7 @@ const SYSTEM_PROMPT = `You write spoken idents for anomaly.fm, a mysterious late
 
 Every ident MUST:
 - state the current time in both Eastern and Pacific (spell times naturally, e.g. "eleven o'clock Eastern, eight o'clock Pacific")
-- mention the San Francisco weather when provided
+- report the weather for the city provided, naming the city on air like a roving late-night weather desk checking in on some far-flung place
 - mention that the station is on X, YouTube, and anomaly.fm (weave it in naturally, vary the phrasing)
 - include the catchphrase exactly once: "where the anomaly here is only YOU" (lean into the YOU)
 
@@ -38,7 +41,7 @@ const FLAVORS = [
   'warm and sincere - a kind word for the night owls and insomniacs',
   'radio-nerd: one tiny true fact about AM radio, static, or the ionosphere',
   'playful conspiracy wink - the static knows more than it lets on',
-  'weather-forward: banter about the fog/sky like a cheerful old-timey weatherman',
+  "weather-forward: banter about tonight's weather city like a cheerful old-timey weatherman",
   'sleepy surrealism - one image that is almost, but not quite, normal',
   'brisk and classic - clean top-of-the-hour energy like a 1960s station break',
 ];
@@ -68,6 +71,7 @@ export function decodeToPcm(audio: Buffer): Promise<Buffer> {
 
 export class Announcer {
   private timer: NodeJS.Timeout | null = null;
+  private readonly cities = new CityDeck(config.feed.dir ? join(config.feed.dir, 'weather-deck.json') : '');
 
   constructor(private readonly deps: AnnouncerDeps) {}
 
@@ -131,11 +135,14 @@ export class Announcer {
         extras.push(`${listeners.total} listener${listeners.total === 1 ? '' : 's'} tuned in right now`);
       }
     } catch { /* optional */ }
-    const weather = await this.weatherSF();
+    const city = await this.cities.next();
+    const weather = await fetchWeather(city);
 
     const user = [
       `Current time: ${eastern} Eastern / ${pacific} Pacific.`,
-      weather ? `San Francisco weather: ${weather}.` : 'Weather unavailable this hour (skip it).',
+      weather
+        ? `Weather in ${city.name}: ${weather}.`
+        : 'Weather unavailable this hour (skip it).',
       `Tone for this hour: ${FLAVORS[Math.floor(Math.random() * FLAVORS.length)]}.`,
       extras.length ? `Optional details (use at most one):\n- ${extras.join('\n- ')}` : 'No extra details this hour.',
     ].join('\n');
@@ -184,28 +191,4 @@ export class Announcer {
     return decodeToPcm(Buffer.from(await res.arrayBuffer()));
   }
 
-  private async weatherSF(): Promise<string | null> {
-    try {
-      const res = await fetch(
-        'https://api.open-meteo.com/v1/forecast?latitude=37.77&longitude=-122.42&current=temperature_2m,weather_code&temperature_unit=fahrenheit',
-        { signal: AbortSignal.timeout(5000) },
-      );
-      if (!res.ok) return null;
-      const data = (await res.json()) as { current?: { temperature_2m?: number; weather_code?: number } };
-      const temp = data.current?.temperature_2m;
-      if (temp === undefined) return null;
-      const code = data.current?.weather_code ?? 0;
-      const sky =
-        code === 0 ? 'clear' :
-        code <= 2 ? 'partly cloudy' :
-        code === 3 ? 'overcast' :
-        code <= 48 ? 'foggy' :
-        code <= 67 ? 'rainy' :
-        code <= 77 ? 'snowy' :
-        code <= 82 ? 'showers' : 'stormy';
-      return `${Math.round(temp)} degrees and ${sky}`;
-    } catch {
-      return null;
-    }
-  }
 }

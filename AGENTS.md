@@ -246,9 +246,11 @@ Verify after: `https://anomaly.fm/` 200, `/radio` streams, bot logs show
 
 - At :00:05 each hour, ONLY when humans=0 (bed or rerun playing): Claude
   Haiku (opencode zen, Anthropic Messages API) writes a <90-word ident —
-  always Eastern+Pacific time, SF weather (open-meteo, keyless), the three
-  platforms (X/YouTube/anomaly.fm), and the catchphrase "where the anomaly
-  here is only YOU" — with a random tone flavor per hour for variety.
+  always Eastern+Pacific time, weather in a ROTATING major city
+  (bot/src/weather.ts: 96-city shuffled deck, open-meteo keyless, no city
+  repeats until the deck empties ~4 days; state in feed/weather-deck.json),
+  the three platforms (X/YouTube/anomaly.fm), and the catchphrase "where
+  the anomaly here is only YOU" — with a random tone flavor per hour.
   ElevenLabs voices it (keys in box .env), ffmpeg decodes to PCM, and
   `mixer.playAnnouncement()` airs it: bed ducks, rerun ducks to 20%,
   crackle applies. Fail-soft: no LLM → plain time check; no TTS → skip hour.
@@ -264,7 +266,13 @@ Verify after: `https://anomaly.fm/` 200, `/radio` streams, bot logs show
 - Bot control API (internal :8090): GET /state, POST /rerun/{queue,unqueue,
   skip,auto}, POST /music/track.
 - Feeds: https://anomaly.fm/feed/status.json (live/humans/members/rerun/
-  listeners), /feed/feed.xml (RSS of joins/leaves).
+  listeners), /feed/feed.xml (RSS of joins/leaves), /feed/audience.jsonl
+  (hourly audience samples).
+- Audience history: `bot/src/audience.ts` samples web+youtube listeners at
+  :00:10 every hour (catch-up sample on boot if >65min gap) into
+  feed/audience.jsonl, 120-day retention. Bot API GET /audience?hours=N;
+  control room AUDIENCE panel draws a 7-day canvas chart (total/web/youtube
+  lines, live-show baseline dots). Weekly recaps can be built on this log.
 
 ## Local dev tricks
 

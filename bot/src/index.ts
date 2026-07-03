@@ -5,6 +5,7 @@ import { Client, Events, GatewayIntentBits } from 'discord.js';
 import { Announcer, decodeToPcm } from './announcer.js';
 import { startApi } from './api.js';
 import { ArchiveCaster } from './archivecast.js';
+import { AudienceLog } from './audience.js';
 import { CLIP_MAX_S, ClipBuffer } from './clip.js';
 import {
   clipCommand,
@@ -225,11 +226,16 @@ setInterval(() => {
   })();
 }, 1500);
 
+// Hourly audience samples (web + youtube) for the control room chart.
+const audience = new AudienceLog(config.feed.dir || '/tmp', fetchAllListeners, currentSnapshot);
+if (config.feed.dir) void audience.start();
+
 startApi({
   mixer,
   rerun,
   getSnapshot: currentSnapshot,
   getListeners: fetchAllListeners,
+  getAudience: (hours) => audience.recent(hours),
   getMusicTrack: () => (activeTrack ? basename(activeTrack) : ''),
   setMusicTrack,
   queueVoicemail,

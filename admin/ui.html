@@ -88,6 +88,12 @@
   </section>
 
   <section>
+    <h2>AUDIENCE &mdash; LAST 7 DAYS</h2>
+    <canvas id="audChart" style="width:100%;height:190px;display:block"></canvas>
+    <div class="muted" id="audStats" style="margin-top:8px"></div>
+  </section>
+
+  <section>
     <h2>HOTLINE &mdash; (361) 266-6259</h2>
     <div class="muted" id="vmQueueInfo" style="margin-bottom:10px"></div>
     <table id="vmTable">
@@ -329,6 +335,82 @@
     try { state = await api('/api/state'); render(); } catch { /* toast already shown */ }
   }
 
+  // --- audience chart: hourly samples, web vs youtube, last 7 days ---
+  async function loadAudience() {
+    try {
+      const r = await api('/api/audience?hours=168');
+      drawAudience(r.samples || []);
+    } catch { /* toast already shown */ }
+  }
+  function drawAudience(samples) {
+    const c = $('audChart');
+    const dpr = window.devicePixelRatio || 1;
+    const w = c.clientWidth || 800, h = 190;
+    c.width = w * dpr; c.height = h * dpr;
+    const g = c.getContext('2d');
+    g.scale(dpr, dpr);
+    g.clearRect(0, 0, w, h);
+    const padL = 30, padR = 6, padT = 8, padB = 20;
+    const now = Date.now(), t0 = now - 168 * 3600e3;
+    const X = (t) => padL + ((t - t0) / (now - t0)) * (w - padL - padR);
+    if (samples.length < 2) {
+      g.fillStyle = '#8a7458'; g.font = '12px Inter';
+      g.fillText('collecting hourly samples \u2014 first chart points appear within the hour', padL, h / 2);
+      $('audStats').textContent = '';
+      return;
+    }
+    const yMax = Math.max(4, ...samples.map((s) => s.total ?? 0)) * 1.15;
+    const Y = (v) => padT + (1 - v / yMax) * (h - padT - padB);
+    // day gridlines + weekday labels (viewer's timezone)
+    g.font = '10px Inter'; g.textAlign = 'left';
+    const d = new Date(now); d.setHours(0, 0, 0, 0);
+    for (let t = d.getTime(); t >= t0; t -= 86400e3) {
+      g.strokeStyle = 'rgba(138,116,88,.25)'; g.beginPath();
+      g.moveTo(X(t), padT); g.lineTo(X(t), h - padB); g.stroke();
+      g.fillStyle = '#8a7458';
+      g.fillText(new Date(t).toLocaleDateString([], { weekday: 'short' }), X(t) + 4, h - 7);
+    }
+    // y ticks
+    g.textAlign = 'right';
+    for (const v of [Math.round(yMax / 2.3), Math.round(yMax / 1.15)]) {
+      g.fillStyle = '#8a7458'; g.fillText(String(v), padL - 5, Y(v) + 3);
+      g.strokeStyle = 'rgba(138,116,88,.15)'; g.beginPath();
+      g.moveTo(padL, Y(v)); g.lineTo(w - padR, Y(v)); g.stroke();
+    }
+    g.textAlign = 'left';
+    const line = (key, color, fill) => {
+      g.strokeStyle = color; g.lineWidth = 1.6; g.beginPath();
+      let prev = null;
+      for (const s of samples) {
+        const v = s[key]; const t = Date.parse(s.t);
+        if (v === null || v === undefined) { prev = null; continue; }
+        if (prev !== null && t - prev > 2.5 * 3600e3) g.moveTo(X(t), Y(v)); // gap
+        else if (prev === null) g.moveTo(X(t), Y(v));
+        else g.lineTo(X(t), Y(v));
+        prev = t;
+      }
+      g.stroke();
+      if (fill) {
+        g.lineTo(X(Date.parse(samples[samples.length - 1].t)), Y(0));
+        g.lineTo(X(Date.parse(samples[0].t)), Y(0));
+        g.closePath(); g.fillStyle = fill; g.fill();
+      }
+    };
+    line('total', 'rgba(23,20,15,.85)', 'rgba(87,183,176,.10)');
+    line('web', '#3e968f');
+    line('youtube', '#c96a4a');
+    // live-show markers along the baseline
+    g.fillStyle = 'rgba(23,20,15,.8)';
+    for (const s of samples) if (s.humans > 0) g.fillRect(X(Date.parse(s.t)) - 1.5, h - padB - 3, 3, 3);
+    const nums = (key) => samples.map((s) => s[key]).filter((v) => v !== null && v !== undefined);
+    const peak = Math.max(0, ...nums('total'));
+    const avg = nums('total').length ? (nums('total').reduce((a, b) => a + b, 0) / nums('total').length).toFixed(1) : '?';
+    $('audStats').innerHTML =
+      '<span style="color:#17140f">\u2014 total</span> \u00b7 <span style="color:#3e968f">\u2014 web</span> \u00b7 '
+      + '<span style="color:#c96a4a">\u2014 youtube</span> \u00b7 \u25aa live show \u00b7 '
+      + 'peak ' + peak + ' \u00b7 avg ' + avg + ' \u00b7 ' + samples.length + ' hourly samples';
+  }
+
   document.body.addEventListener('click', async (e) => {
     const b = e.target.closest('button');
     if (!b) return;
@@ -367,6 +449,9 @@
 
   refresh();
   setInterval(refresh, 5000);
+  loadAudience();
+  setInterval(loadAudience, 5 * 60_000);
+  window.addEventListener('resize', loadAudience);
 })();
 </script>
 </body>
