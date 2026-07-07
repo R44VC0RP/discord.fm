@@ -10,242 +10,276 @@
   :root {
     --paper: #d9c3a9; --cream: #efe0cc; --teal: #57b7b0; --teal-deep: #3e968f;
     --ink: #17140f; --ink-soft: #2a241c; --cream-dim: #b39d80; --brown-dim: #8a7458;
+    --muted-text: #6f5d45; --danger: #c96a4a; --danger-deep: #95442c;
+    --green: #24615c; --amber: #936015; --radius-card: 18px; --radius-ctl: 8px;
+    --dur-fast: 150ms; --dur-med: 220ms; --ease: cubic-bezier(.2,.7,.3,1);
   }
   * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html { scroll-behavior: smooth; }
   body {
     margin: 0; min-height: 100dvh; background: var(--paper); color: var(--ink);
-    font-family: "Inter", system-ui, -apple-system, sans-serif;
-    padding: 28px 20px 60px;
-    font-variant-numeric: tabular-nums;
-    -webkit-font-smoothing: antialiased;
+    font-family: "Inter", system-ui, -apple-system, sans-serif; padding: 20px 20px 72px;
+    font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased;
   }
-  main { max-width: 900px; margin: 0 auto; }
-  /* Wordmark keeps the station's pixel identity; everything else is Inter. */
-  h1 {
-    font-family: "Pixelify Sans", monospace;
-    font-size: 1.4rem; letter-spacing: .2em; display: flex; align-items: center; gap: 14px;
-  }
-  h1 .chip { width: 22px; height: 22px; background: var(--teal); border-radius: 5px; }
-  h1 small { font-family: "Inter", sans-serif; font-size: .68rem; font-weight: 600; color: var(--brown-dim); letter-spacing: .18em; }
-  section {
-    background: var(--cream); border-radius: 18px; padding: 18px 20px; margin-top: 18px;
-    box-shadow: 0 10px 26px rgba(37,26,14,.22);
-  }
-  h2 { font-size: .72rem; font-weight: 700; letter-spacing: .14em; margin: 0 0 12px; color: var(--ink-soft); }
-  .now { background: var(--ink); color: var(--cream); }
-  .now h2 { color: var(--cream-dim); }
-  .now button { color: var(--cream); border-color: #4a4436; }
-  .now button:hover { background: var(--teal-deep); border-color: var(--teal-deep); }
-  .now .line { font-size: 1.05rem; font-weight: 600; color: var(--teal); }
-  .now .sub { font-size: .8rem; color: var(--cream-dim); margin-top: 6px; }
-  table { width: 100%; border-collapse: collapse; font-size: .85rem; }
-  th { text-align: left; font-size: .68rem; font-weight: 600; letter-spacing: .1em; color: var(--brown-dim); padding: 4px 8px; }
-  td { padding: 7px 8px; border-top: 1px solid rgba(138,116,88,.25); vertical-align: middle; }
-  button {
-    font: inherit; font-size: .74rem; font-weight: 600; letter-spacing: .04em; cursor: pointer;
-    color: var(--ink); background: transparent; border: 1px solid var(--brown-dim);
-    border-radius: 6px; padding: .32rem .75rem; margin-right: 4px;
-  }
-  button:hover { background: var(--teal); border-color: var(--teal-deep); }
-  button:disabled { opacity: .45; cursor: not-allowed; background: transparent; border-color: var(--brown-dim); }
-  button.danger:hover { background: #c96a4a; border-color: #a04c30; }
-  button.primary { background: var(--ink); color: var(--cream); border-color: var(--ink); }
-  button.primary:hover { background: var(--teal-deep); }
-  .muted { color: var(--brown-dim); font-size: .78rem; }
+  .top { max-width: 1240px; margin: 0 auto 16px; display: flex; align-items: center; gap: 20px; }
+  h1 { font-family: "Pixelify Sans", monospace; font-size: 1.25rem; letter-spacing: .2em; display: flex; align-items: center; gap: 12px; margin: 0; white-space: nowrap; }
+  h1 .logo-chip { width: 20px; height: 20px; background: var(--teal); border-radius: 5px; }
+  h1 small { font-family: "Inter", sans-serif; font-size: .62rem; font-weight: 700; color: var(--muted-text); letter-spacing: .18em; }
+  .tabs { display: flex; gap: 4px; margin-left: auto; background: rgba(23,20,15,.08); border-radius: 10px; padding: 4px; overflow-x: auto; scrollbar-width: thin; }
+  .tabs a { min-height: 36px; padding: .48rem .78rem; border-radius: 7px; display: inline-flex; align-items: center; gap: 6px; color: var(--ink-soft); text-decoration: none; white-space: nowrap; font-size: .7rem; font-weight: 700; letter-spacing: .09em; }
+  .tabs a:hover { background: rgba(239,224,204,.6); }
+  .tabs a[aria-current="page"] { background: var(--ink); color: var(--cream); }
+  .count { min-width: 18px; padding: .05rem .35rem; border-radius: 9px; background: var(--danger); color: var(--cream); text-align: center; font-size: .61rem; }
+  .layout { max-width: 1240px; margin: 0 auto; display: grid; grid-template-columns: 340px minmax(0,1fr); gap: 18px; align-items: start; }
+  .rail { position: sticky; top: 16px; display: grid; gap: 12px; min-width: 0; }
+  .now-card { background: var(--ink); color: var(--cream); border-radius: var(--radius-card); padding: 18px; box-shadow: 0 10px 26px rgba(37,26,14,.28); transition: opacity var(--dur-fast), filter var(--dur-fast); }
+  .now-card.offline { opacity: .68; filter: grayscale(.35); }
+  .air-row { display: flex; align-items: center; gap: 7px; min-width: 0; }
+  .status-chip, .badge { border-radius: 6px; display: inline-flex; align-items: center; gap: 4px; font-size: .62rem; font-weight: 700; letter-spacing: .08em; padding: .28rem .5rem; white-space: nowrap; }
+  .air-badge { background: rgba(179,157,128,.18); color: var(--cream-dim); transition: background var(--dur-med); }
+  .air-badge.live { background: var(--danger); color: var(--cream); }
+  .air-badge.auto { background: var(--teal-deep); color: var(--cream); }
+  .air-badge.warn { background: #75521f; color: var(--cream); }
+  .freshness { margin-left: auto; color: var(--cream-dim); font-size: .62rem; white-space: nowrap; }
+  .freshness.stale { color: #f0af8f; font-weight: 700; }
+  .cue { display: flex; gap: 14px; margin-top: 16px; align-items: center; min-width: 0; }
+  .cue-art { width: 76px; height: 76px; flex: none; display: grid; place-items: center; border-radius: 12px; background: linear-gradient(145deg,var(--teal-deep),#2c6d68); box-shadow: inset 0 0 0 2px rgba(239,224,204,.18); font: 2rem "Pixelify Sans",monospace; }
+  .cue-copy { min-width: 0; }
+  .cue-type { color: var(--teal); font-size: .6rem; font-weight: 700; letter-spacing: .15em; }
+  .cue-title { margin: 3px 0; color: var(--cream); font-size: 1.02rem; font-weight: 700; line-height: 1.25; overflow-wrap: anywhere; }
+  .cue-artist { color: var(--cream-dim); font-size: .76rem; }
+  .progress { margin-top: 14px; }
+  .progress-track { height: 6px; border-radius: 3px; background: rgba(239,224,204,.16); overflow: hidden; }
+  .progress-fill { height: 100%; width: 0; border-radius: 3px; background: var(--teal); transition: width 1s linear; }
+  .progress-times { display: flex; justify-content: space-between; margin-top: 5px; color: var(--cream-dim); font-size: .68rem; }
+  .rail-kv { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; margin-top: 14px; }
+  .rail-kv .cell { min-width: 0; padding: 8px 9px; border-radius: 10px; background: rgba(239,224,204,.07); }
+  .rail-kv .k, .mini-card .k { color: var(--cream-dim); font-size: .57rem; font-weight: 700; letter-spacing: .13em; }
+  .rail-kv .v { margin-top: 3px; font-size: .78rem; font-weight: 600; overflow-wrap: anywhere; }
+  .rail-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+  .rail-note { margin-top: 10px; color: var(--cream-dim); font-size: .66rem; line-height: 1.5; }
+  .inline-warning { margin-top: 10px; padding: 8px 10px; border: 1px solid rgba(201,106,74,.5); border-radius: 8px; color: #f0c6b5; font-size: .7rem; }
+  .mini-card { background: var(--cream); border-radius: 14px; padding: 12px 14px; box-shadow: 0 6px 16px rgba(37,26,14,.16); font-size: .75rem; line-height: 1.45; }
+  .mini-card .k { color: var(--muted-text); margin-bottom: 3px; }
+  .work, .view { min-width: 0; }
+  .view { display: grid; gap: 16px; }
+  section.panel, details.panel { margin: 0; padding: 16px 18px; border: 0; border-radius: var(--radius-card); background: var(--cream); box-shadow: 0 10px 26px rgba(37,26,14,.20); }
+  details.panel > summary { cursor: pointer; }
+  h2, .panel-title { margin: 0 0 5px; color: var(--ink-soft); font-size: .7rem; font-weight: 700; letter-spacing: .14em; }
+  h2 { display: flex; align-items: center; gap: 10px; }
+  .depth { margin-left: auto; color: var(--muted-text); font-size: .64rem; font-weight: 600; letter-spacing: .04em; text-align: right; }
+  .h2sub { margin: 0 0 12px; color: var(--muted-text); font-size: .72rem; line-height: 1.5; }
+  .muted { color: var(--muted-text); font-size: .76rem; }
   .active { color: var(--teal-deep); font-weight: 700; }
-  :focus-visible { outline: 2px solid var(--teal-deep); outline-offset: 2px; border-radius: 4px; }
-  input[type="text"], input[type="search"], textarea {
-    font: inherit; font-size: .8rem; color: var(--ink);
-    background: rgba(255,255,255,.55); border: 1px solid var(--brown-dim); border-radius: 6px;
-    padding: .35rem .55rem; min-width: 0;
-  }
+  .row-flex { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+  .entity-list, .cue-list, .skin-grid, .call-list { display: grid; gap: 8px; }
+  .entity-row, .cue-row, .call-card, .skin-card { border: 1px solid rgba(138,116,88,.3); border-radius: 12px; background: rgba(255,255,255,.42); }
+  .entity-row { display: grid; grid-template-columns: minmax(150px,1.2fr) minmax(100px,.8fr) auto auto; gap: 10px; align-items: center; padding: 10px 12px; font-size: .8rem; }
+  .entity-main { min-width: 0; }
+  .entity-main strong { display: block; overflow: hidden; text-overflow: ellipsis; }
+  .entity-meta { color: var(--muted-text); font-size: .71rem; overflow-wrap: anywhere; }
+  .actions { display: flex; justify-content: flex-end; gap: 5px; flex-wrap: wrap; }
+  .cue-row { display: grid; grid-template-columns: 28px 42px minmax(0,1fr) 65px 110px; gap: 10px; align-items: center; padding: 9px 11px; }
+  .idx { color: var(--muted-text); font-size: .7rem; text-align: center; }
+  .glyph { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 9px; background: var(--ink-soft); color: var(--cream); font: 1.1rem "Pixelify Sans",monospace; }
+  .glyph.music { background: var(--teal-deep); } .glyph.spoken { background: #6e628c; } .glyph.hotline { background: var(--danger); }
+  .cue-row .title { min-width: 0; }
+  .cue-row .title strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .81rem; }
+  .cue-row .len { font-size: .73rem; }
+  .badge { justify-self: end; color: var(--muted-text); background: rgba(138,116,88,.16); }
+  .badge.ready { color: var(--green); background: rgba(87,183,176,.22); }
+  .badge.warn { color: var(--amber); background: rgba(200,143,42,.18); }
+  .badge.bad { color: var(--danger-deep); background: rgba(201,106,74,.15); }
+  .call-card { padding: 13px; }
+  .call-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .call-head strong { margin-right: auto; font-size: .83rem; }
+  .transcript { margin: 10px 0; padding-left: 10px; border-left: 3px solid var(--teal); color: var(--ink-soft); font-size: .78rem; font-style: italic; line-height: 1.45; overflow-wrap: anywhere; }
+  .call-groups { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding-top: 10px; border-top: 1px solid rgba(138,116,88,.25); }
+  .action-label { margin-bottom: 6px; color: var(--muted-text); font-size: .62rem; font-weight: 700; letter-spacing: .1em; }
+  .filter-row { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+  .filter-row button[aria-pressed="true"] { background: var(--ink); color: var(--cream); border-color: var(--ink); }
+  .skin-grid { grid-template-columns: repeat(auto-fill,minmax(220px,1fr)); }
+  .skin-card { padding: 12px; }
+  .skin-card .actions { margin-top: 10px; justify-content: flex-start; }
+  table { width: 100%; border-collapse: collapse; font-size: .8rem; }
+  th { padding: 5px 7px; color: var(--muted-text); text-align: left; font-size: .66rem; font-weight: 700; letter-spacing: .08em; }
+  td { padding: 7px; border-top: 1px solid rgba(138,116,88,.25); vertical-align: top; }
+  .scroll { max-width: 100%; overflow-x: auto; }
+  button { min-height: 40px; padding: .47rem .72rem; border: 1.5px solid var(--brown-dim); border-radius: var(--radius-ctl); background: transparent; color: var(--ink); cursor: pointer; font: 700 .7rem "Inter",sans-serif; letter-spacing: .04em; transition: background var(--dur-fast) var(--ease),border-color var(--dur-fast) var(--ease),color var(--dur-fast); }
+  button:hover { background: var(--teal); border-color: var(--teal-deep); }
+  button:disabled { opacity: .46; cursor: not-allowed; background: transparent; }
+  button.primary { background: var(--ink); color: var(--cream); border-color: var(--ink); }
+  button.primary:hover { background: var(--teal-deep); border-color: var(--teal-deep); }
+  button.danger { color: var(--danger-deep); border-color: var(--danger); }
+  button.danger:hover, button.danger.armed { background: var(--danger); border-color: var(--danger-deep); color: var(--cream); }
+  .now-card button { color: var(--cream); border-color: #5d5545; }
+  .now-card button:hover { background: var(--teal-deep); border-color: var(--teal-deep); }
+  input[type="text"], input[type="search"], textarea { min-width: 0; padding: .55rem .65rem; border: 1px solid var(--brown-dim); border-radius: var(--radius-ctl); background: rgba(255,255,255,.58); color: var(--ink); font: .8rem "Inter",sans-serif; }
   textarea { width: 100%; resize: vertical; }
-  .scroll { overflow-x: auto; }
-  .chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
-  .chip-row code {
-    font-size: .72rem; background: rgba(138,116,88,.16); border: 1px solid rgba(138,116,88,.35);
-    border-radius: 6px; padding: .15rem .45rem;
+  input[type="file"] { max-width: 100%; font-size: .76rem; }
+  .counter { margin-left: auto; } .counter.warn { color: var(--danger-deep); font-weight: 700; }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+  .chip-row code { padding: .2rem .45rem; border: 1px solid rgba(138,116,88,.35); border-radius: 6px; background: rgba(138,116,88,.13); font-size: .7rem; }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 7px 14px; font-size: .8rem; }
+  .kv dt { color: var(--muted-text); font-size: .67rem; font-weight: 700; letter-spacing: .08em; }
+  .kv dd { margin: 0; overflow-wrap: anywhere; }
+  .warnbox { margin-top: 10px; padding: .55rem .7rem; border: 1px solid rgba(160,76,48,.4); border-radius: 8px; background: rgba(201,106,74,.11); color: var(--ink-soft); font-size: .74rem; line-height: 1.45; }
+  .sr-only { position: absolute !important; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+  :focus-visible { outline: 3px solid var(--teal-deep); outline-offset: 2px; }
+  #dock { position: fixed; left: 50%; bottom: max(14px,env(safe-area-inset-bottom)); z-index: 80; width: min(860px,94vw); display: none; align-items: center; gap: 12px; padding: 10px 14px; transform: translateX(-50%); border-radius: 12px; background: var(--ink); color: var(--cream); box-shadow: 0 12px 30px rgba(0,0,0,.45); }
+  #dock.show { display: flex; } #dock button { flex: none; color: var(--cream); border-color: #4a4436; } #dock button:hover { background: var(--teal-deep); }
+  #dock .title { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .76rem; }
+  #dock input[type="range"] { min-width: 80px; flex: 1; accent-color: var(--teal); }
+  #dock .time { color: var(--cream-dim); font-size: .7rem; white-space: nowrap; }
+  body:has(#dock.show) { padding-bottom: 100px; }
+  #toast { position: fixed; left: 50%; bottom: 16px; z-index: 100; max-width: min(90vw,620px); padding: .65rem 1rem; transform: translate(-50%,6px); border-radius: 8px; background: var(--ink); color: var(--cream); opacity: 0; pointer-events: none; font-size: .78rem; transition: opacity 180ms,transform 180ms; }
+  #toast.show { opacity: 1; transform: translate(-50%,0); }
+  @media (max-width: 1099px) {
+    body { padding: 12px 12px 72px; }
+    .top { align-items: flex-start; flex-wrap: wrap; gap: 10px; }
+    .tabs { order: 2; width: 100%; margin-left: 0; }
+    .tabs a { min-height: 44px; }
+    .layout { grid-template-columns: 1fr; gap: 12px; }
+    .rail { position: static; }
+    .now-card { position: sticky; top: 8px; z-index: 30; padding: 14px; }
+    .mini-card { display: none; }
+    .cue { margin-top: 10px; } .cue-art { width: 58px; height: 58px; font-size: 1.45rem; }
+    .cue-title { font-size: .92rem; } .progress { margin-top: 9px; }
+    .rail-kv { margin-top: 10px; gap: 6px; } .rail-kv .cell { padding: 6px 8px; }
+    .rail-actions { margin-top: 10px; } button { min-height: 44px; }
+    section.panel, details.panel { padding: 14px; }
+    .entity-row { grid-template-columns: minmax(0,1fr) auto; }
+    .entity-row > :not(.entity-main):not(.actions) { grid-column: 1 / -1; }
+    .entity-row .actions { grid-column: 1 / -1; justify-content: flex-start; }
+    .cue-row { grid-template-columns: 42px minmax(0,1fr) auto; padding: 8px; gap: 8px; }
+    .cue-row .idx, .cue-row .len { display: none; }
+    .call-groups { grid-template-columns: 1fr; }
+    .kv { grid-template-columns: 1fr; gap: 3px; } .kv dd { margin-bottom: 7px; }
+    #dock { width: calc(100vw - 16px); gap: 8px; padding: 8px; } #dock .title { max-width: 105px; } #dock .time { display: none; }
   }
-  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: .82rem; }
-  .kv dt { color: var(--brown-dim); font-size: .7rem; font-weight: 600; letter-spacing: .08em; align-self: center; }
-  .kv dd { margin: 0; }
-  .warnbox {
-    font-size: .76rem; color: var(--ink-soft); background: rgba(201,106,74,.12);
-    border: 1px solid rgba(160,76,48,.35); border-radius: 8px; padding: .5rem .7rem; margin-top: 10px;
-  }
-
-  /* bottom dock player (shared preview for recordings/voicemails/music) */
-  #dock {
-    position: fixed; left: 50%; transform: translateX(-50%); bottom: 14px;
-    width: min(860px, 94vw); display: none; align-items: center; gap: 12px;
-    background: var(--ink); color: var(--cream);
-    border-radius: 12px; padding: 10px 14px;
-    box-shadow: 0 12px 30px rgba(0, 0, 0, .45); z-index: 50;
-  }
-  #dock.show { display: flex; }
-  #dock button { color: var(--cream); border-color: #4a4436; margin: 0; }
-  #dock button:hover { background: var(--teal-deep); }
-  #dock .title { font-size: .78rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
-  #dock input[type="range"] { flex: 1; accent-color: var(--teal); height: 4px; margin: 0; }
-  #dock .time { font-size: .72rem; color: var(--cream-dim); white-space: nowrap; }
-  body:has(#dock.show) main { padding-bottom: 70px; }
-  .row-flex { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-  input[type="file"] { font-size: .78rem; }
-  #toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--cream); padding: .5rem 1.1rem; border-radius: 8px; font-size: .8rem; opacity: 0; transition: opacity .3s; pointer-events: none; }
-  #toast.show { opacity: 1; }
+  @media (max-width: 430px) { h1 small { display: none; } .rail-note { display: none; } .air-row { flex-wrap: wrap; } .freshness { margin-left: 0; } }
+  @media (prefers-reduced-motion: reduce) { *,*::before,*::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
 </style>
 </head>
 <body>
-<main>
-  <h1><span class="chip"></span>ANOMALY.FM <small>CONTROL ROOM</small></h1>
+<header class="top">
+  <h1><span class="logo-chip"></span>ANOMALY.FM <small>CONTROL ROOM</small></h1>
+  <nav class="tabs" aria-label="control room views">
+    <a href="#onair" id="tab-onair" data-tab="onair">ON AIR</a>
+    <a href="#library" id="tab-library" data-tab="library">LIBRARY</a>
+    <a href="#calls" id="tab-calls" data-tab="calls">CALLS <span class="count" id="callsCount" hidden>0</span></a>
+    <a href="#archive" id="tab-archive" data-tab="archive">ARCHIVE</a>
+    <a href="#station" id="tab-station" data-tab="station">STATION</a>
+  </nav>
+</header>
 
-  <section class="now">
-    <h2>NOW</h2>
-    <div class="line" id="nowLine">connecting&hellip;</div>
-    <div class="sub" id="nowSub"></div>
-    <div class="row-flex" style="margin-top:12px">
-      <button id="announceBtn" title="fire an AI time check now">&#128226; FIRE TIME CHECK</button>
-    </div>
-  </section>
-
-  <section>
-    <h2>AUDIENCE &mdash; LAST 7 DAYS</h2>
-    <canvas id="audChart" role="img" aria-label="Hourly listener chart for the last 7 days: total, web, and YouTube listeners with live-show markers. A text summary follows." aria-describedby="audStats" style="width:100%;height:190px;display:block"></canvas>
-    <div class="muted" id="audStats" style="margin-top:8px"></div>
-  </section>
-
-  <section>
-    <h2>HOTLINE &mdash; (361) 266-6259</h2>
-    <div class="muted" id="vmQueueInfo" style="margin-bottom:10px"></div>
-    <div class="scroll">
-      <table id="vmTable">
-        <thead><tr><th>RECEIVED</th><th>FROM</th><th>LENGTH</th><th>SIZE</th><th></th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </div>
-    <details style="margin-top:12px">
-      <summary class="muted" style="cursor:pointer">archived messages</summary>
-      <div class="scroll"><table id="vmArchTable" style="margin-top:8px"><tbody></tbody></table></div>
-    </details>
-  </section>
-
-  <section>
-    <h2>HOTLINE &mdash; AI QUEUE</h2>
-    <div class="muted" id="hlaiInfo" role="status" style="margin-bottom:10px">connecting to automation&hellip;</div>
-    <div class="scroll">
-      <table id="hlaiTable">
-        <thead><tr><th>RECEIVED</th><th>STATUS</th><th>SCREEN</th><th>LENGTH</th><th></th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </div>
-    <div class="muted" style="margin-top:8px">Transcripts here are the PII-redacted projection the AI DJ sees; raw audio and caller numbers stay in the private HOTLINE inbox above. AIRED calls are terminal.</div>
-  </section>
-
-  <section>
-    <h2>RERUN QUEUE</h2>
-    <div class="row-flex" style="margin-bottom:10px">
-      <button id="autoBtn" aria-pressed="false">AUTO: ?</button>
-      <button id="skipBtn">SKIP CURRENT</button>
-      <span class="muted" id="pausedInfo"></span>
-    </div>
-    <div class="scroll"><table id="queueTable"><tbody></tbody></table></div>
-  </section>
-
-  <section>
-    <h2>ARCHIVE</h2>
-    <div class="scroll">
-      <table id="recTable">
-        <thead><tr><th>SESSION</th><th>WHO</th><th>LENGTH</th><th>SIZE</th><th></th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </div>
-  </section>
-
-  <section>
-    <h2>MUSIC BED</h2>
-    <div class="scroll"><table id="musicTable"><tbody></tbody></table></div>
-    <div class="row-flex" style="margin-top:12px">
-      <input type="file" id="uploadFile" accept=".mp3,audio/mpeg">
-      <button class="primary" id="uploadBtn">UPLOAD TRACK</button>
-      <span class="muted">mp3 only; becomes selectable immediately</span>
-    </div>
-  </section>
-
-  <section>
-    <h2>ASSET LIBRARY</h2>
-    <div class="muted" id="libInfo" role="status" style="margin-bottom:10px">connecting to automation&hellip;</div>
-    <form class="row-flex" id="libSearchForm" style="margin-bottom:10px">
-      <input type="search" id="libSearch" placeholder="search title / artist / tag" aria-label="search the asset library" style="flex:1;max-width:320px">
-      <button type="submit" id="libSearchBtn">&#128269; SEARCH</button>
-      <button type="button" id="libMoreBtn" hidden>&#11015;&#65039; LOAD MORE</button>
-    </form>
-    <div class="scroll">
-      <table id="libTable">
-        <thead><tr><th>TITLE</th><th>ARTIST</th><th>TAGS</th><th>LENGTH</th><th>STATUS</th><th></th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </div>
-    <div class="row-flex" style="margin-top:14px">
-      <input type="file" id="libFile" accept=".mp3,audio/mpeg" aria-label="mp3 file to upload to the asset library">
-      <input type="text" id="libTitle" placeholder="title (optional)" aria-label="track title">
-      <input type="text" id="libArtist" placeholder="artist (optional)" aria-label="artist">
-      <input type="text" id="libTags" placeholder="tags, comma separated" aria-label="tags, comma separated">
-      <button class="primary" id="libUploadBtn">&#11014;&#65039; UPLOAD TO LIBRARY</button>
-    </div>
-    <div class="warnbox">mp3 only, 60 MB cap. Every upload becomes playable in AI programming immediately &mdash; you are responsible for broadcast rights to anything you upload here.</div>
-  </section>
-
-  <section>
-    <h2>AI QUEUE</h2>
-    <div class="muted" id="aqNow" role="status" style="margin-bottom:6px">connecting to automation&hellip;</div>
-    <div class="muted" id="aqInfo" style="margin-bottom:10px"></div>
-    <div class="row-flex" style="margin-bottom:10px">
-      <button id="aqRefreshBtn">&#128260; REFRESH</button>
-      <span class="muted" id="aqFlags"></span>
-    </div>
-    <div class="scroll">
-      <table id="aqTable">
-        <thead><tr><th>#</th><th>TYPE</th><th>TITLE</th><th>LENGTH</th><th>STATE</th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </div>
-    <details style="margin-top:10px">
-      <summary class="muted" style="cursor:pointer">recent queue events (incl. failures)</summary>
-      <table id="aqEvents" style="margin-top:8px"><tbody></tbody></table>
-    </details>
-    <div style="margin-top:14px">
-      <label class="muted" for="aqScript" style="display:block;margin-bottom:4px">DJ commentary script (rendered to speech ahead of air; airs once READY)</label>
-      <textarea id="aqScript" rows="2" maxlength="2000"></textarea>
-      <div class="row-flex" style="margin-top:8px">
-        <button id="aqCommentBtn">&#127908; ADD COMMENTARY</button>
-        <span class="muted">&le;180 words &middot; screened for PII/unsafe content before rendering</span>
+<div class="layout">
+  <aside class="rail" aria-label="now playing">
+    <div class="now-card" id="nowCard">
+      <div class="air-row">
+        <span class="status-chip air-badge" id="airBadge">CONNECTING</span>
+        <span class="status-chip air-badge" id="sourceBadge">&mdash;</span>
+        <span class="freshness" id="freshness">waiting for state</span>
       </div>
+      <div class="cue">
+        <div class="cue-art" id="cueGlyph" aria-hidden="true">&#9672;</div>
+        <div class="cue-copy">
+          <div class="cue-type" id="cueType">STATION</div>
+          <div class="cue-title" id="nowLine">connecting&hellip;</div>
+          <div class="cue-artist" id="nowSub"></div>
+        </div>
+      </div>
+      <div class="progress" id="cueProgress" hidden>
+        <div class="progress-track" role="progressbar" id="progressBar" aria-label="approximate cue progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div class="progress-fill" id="progressFill"></div></div>
+        <div class="progress-times"><span id="progressNow">0:00</span><span id="progressEnd">0:00</span></div>
+      </div>
+      <div class="rail-kv">
+        <div class="cell"><div class="k">LISTENERS</div><div class="v" id="railListeners">&mdash;</div></div>
+        <div class="cell"><div class="k">HUMANS</div><div class="v" id="railHumans">&mdash;</div></div>
+        <div class="cell"><div class="k">QUEUE</div><div class="v" id="railQueue">&mdash;</div></div>
+        <div class="cell"><div class="k">RERUN AUTO</div><div class="v" id="railRerun">&mdash;</div></div>
+      </div>
+      <div class="rail-actions">
+        <button id="announceBtn" title="fire an AI time check now">&#128226; TIME CHECK</button>
+        <button class="danger" id="skipBtn" data-two-step="SKIP?" hidden>&#9197;&#65039; SKIP RERUN</button>
+      </div>
+      <div class="rail-note" id="railFlags">automation flags loading&hellip;</div>
+      <div class="inline-warning" id="railWarning" hidden></div>
     </div>
-  </section>
+    <div class="mini-card"><div class="k">HOTLINE</div><div id="hotlineMini">loading calls&hellip;</div></div>
+    <div class="mini-card"><div class="k">AUDIENCE &middot; 7 DAYS</div><div id="audienceMini">collecting hourly samples&hellip;</div></div>
+  </aside>
 
-  <section>
-    <h2>AI DJ</h2>
-    <div class="muted" id="djInfo" role="status" style="margin-bottom:10px">connecting to automation&hellip;</div>
-    <dl class="kv" id="djKv"></dl>
-    <div class="chip-row" id="djTools" aria-label="the seven DJ tools (read-only)"></div>
-    <div class="muted" style="margin-top:10px">DJ mode (OFF / SHADOW / LIVE) and all automation flags are environment feature flags on the production box &mdash; changing them requires a deployment/.env change, not a browser control.</div>
-  </section>
-
-  <section>
-    <h2>WEB PLAYER SKIN</h2>
-    <div class="row-flex" style="margin-bottom:10px">
-      <button id="skinAutoBtn">AUTO DAILY</button>
-      <span class="muted" id="skinInfo"></span>
+  <main class="work" id="workspace">
+    <div class="view" id="view-onair" data-view="onair" aria-labelledby="tab-onair">
+      <section class="panel" aria-labelledby="queueHeading">
+        <h2 id="queueHeading">UP NEXT <span class="depth" id="aqInfo"></span></h2>
+        <p class="h2sub">AI queue in play order. Add tracks from LIBRARY or write a commentary break below.</p>
+        <div class="muted" id="aqNow" hidden>connecting to automation&hellip;</div>
+        <div class="cue-list" id="aqTable"></div>
+        <details style="margin-top:10px"><summary class="muted">recent queue events (including failures)</summary><div class="scroll"><table id="aqEvents"><caption class="sr-only">Recent automation queue events</caption><tbody></tbody></table></div></details>
+      </section>
+      <section class="panel" aria-labelledby="commentaryHeading">
+        <h2 id="commentaryHeading">ADD DJ COMMENTARY</h2>
+        <p class="h2sub" id="aqFlags"></p>
+        <label class="muted" for="aqScript">Script rendered to speech ahead of air; airs once READY</label>
+        <textarea id="aqScript" rows="3" maxlength="2000"></textarea>
+        <div class="row-flex" style="margin-top:8px"><button class="primary" id="aqCommentBtn">&#127908; ADD COMMENTARY</button><span class="muted">&le;180 words &middot; screened for PII/unsafe content</span><span class="muted counter" id="aqCounter">0 / 2000</span></div>
+      </section>
+      <section class="panel" aria-labelledby="rerunHeading">
+        <h2 id="rerunHeading">RERUNS <span class="depth" id="rerunOwner">OWNER &mdash;</span></h2>
+        <div class="row-flex"><button id="autoBtn" aria-pressed="false">AUTO: ?</button><span class="muted" id="pausedInfo"></span></div>
+      </section>
     </div>
-    <div class="scroll"><table id="skinTable"><tbody></tbody></table></div>
-  </section>
-</main>
 
-<div id="dock">
+    <div class="view" id="view-library" data-view="library" hidden>
+      <section class="panel" aria-labelledby="libraryHeading">
+        <h2 id="libraryHeading">ASSET LIBRARY</h2>
+        <div class="muted" id="libInfo">connecting to automation&hellip;</div>
+        <form class="row-flex" id="libSearchForm" style="margin:12px 0"><input type="search" id="libSearch" placeholder="search title / artist / tag" aria-label="search the asset library" style="flex:1;max-width:360px"><button type="submit" id="libSearchBtn">&#128269; SEARCH</button><button type="button" id="libMoreBtn" hidden>&#11015;&#65039; LOAD MORE</button></form>
+        <div class="entity-list" id="libTable"></div>
+        <div class="row-flex" style="margin-top:16px"><input type="file" id="libFile" accept=".mp3,audio/mpeg" aria-label="mp3 file to upload to the asset library"><input type="text" id="libTitle" placeholder="title (optional)" aria-label="track title"><input type="text" id="libArtist" placeholder="artist (optional)" aria-label="artist"><input type="text" id="libTags" placeholder="tags, comma separated" aria-label="tags, comma separated"><button class="primary" id="libUploadBtn">&#11014;&#65039; UPLOAD TO LIBRARY</button></div>
+        <div class="warnbox">mp3 only, 60 MB cap. Every upload becomes playable in AI programming immediately &mdash; you are responsible for broadcast rights to anything you upload here.</div>
+      </section>
+      <details class="panel">
+        <summary class="panel-title">LEGACY BED &mdash; FALLBACK LOOP</summary>
+        <p class="h2sub">Safety loop when nothing else owns the air; separate from the AI library.</p>
+        <div class="entity-list" id="musicTable"></div>
+        <div class="row-flex" style="margin-top:12px"><input type="file" id="uploadFile" accept=".mp3,audio/mpeg"><button class="primary" id="uploadBtn">UPLOAD TRACK</button><span class="muted">mp3 only; becomes selectable immediately</span></div>
+      </details>
+    </div>
+
+    <div class="view" id="view-calls" data-view="calls" hidden>
+      <section class="panel" aria-labelledby="callsHeading">
+        <h2 id="callsHeading">CALLS &mdash; (361) 266-6259</h2>
+        <div class="muted" id="vmQueueInfo"></div>
+        <div class="muted" id="hlaiInfo">connecting to automation&hellip;</div>
+        <div class="filter-row" aria-label="call filters" style="margin-top:12px"><button data-callfilter="inbox" aria-pressed="true">INBOX</button><button data-callfilter="review" aria-pressed="false">NEEDS REVIEW</button><button data-callfilter="all" aria-pressed="false">ALL + ARCHIVED</button></div>
+        <div class="call-list" id="callsList"></div>
+        <p class="h2sub" style="margin-top:12px">AI actions use only the PII-redacted transcript. The DJ never sees the caller number or raw audio; AIRED calls are terminal.</p>
+      </section>
+    </div>
+
+    <div class="view" id="view-archive" data-view="archive" hidden>
+      <section class="panel" aria-labelledby="archiveHeading"><h2 id="archiveHeading">ARCHIVE</h2><p class="h2sub">Preview, download, or cue a recorded session as a rerun.</p><div class="entity-list" id="recTable"></div></section>
+      <section class="panel" aria-labelledby="rerunQueueHeading"><h2 id="rerunQueueHeading">RERUN QUEUE</h2><p class="h2sub">Explicitly cued recordings play in this order and bypass AUTO OFF.</p><div class="entity-list" id="queueTable"></div></section>
+    </div>
+
+    <div class="view" id="view-station" data-view="station" hidden>
+      <section class="panel" aria-labelledby="djHeading"><h2 id="djHeading">AI DJ HEALTH</h2><div class="muted" id="djInfo">connecting to automation&hellip;</div><dl class="kv" id="djKv"></dl><div class="chip-row" id="djTools" aria-label="the seven DJ tools (read-only)"></div><div class="muted" style="margin-top:10px">DJ mode (OFF / SHADOW / LIVE) and all automation flags are environment feature flags on the production box &mdash; changing them requires a deployment/.env change, not a browser control.</div></section>
+      <section class="panel" aria-labelledby="audienceHeading"><h2 id="audienceHeading">AUDIENCE &mdash; LAST 7 DAYS</h2><canvas id="audChart" role="img" aria-label="Hourly listener chart for the last 7 days: total, web, and YouTube listeners with live-show markers. A text summary and table follow." aria-describedby="audStats" style="width:100%;height:190px;display:block"></canvas><div class="muted" id="audStats" style="margin-top:8px"></div><details style="margin-top:10px"><summary class="muted">audience samples as table</summary><div class="scroll"><table id="audTable"><caption class="sr-only">Hourly audience samples</caption><thead><tr><th scope="col">TIME</th><th scope="col">TOTAL</th><th scope="col">WEB</th><th scope="col">YOUTUBE</th><th scope="col">LIVE</th></tr></thead><tbody></tbody></table></div></details></section>
+      <section class="panel" aria-labelledby="skinHeading"><h2 id="skinHeading">WEB PLAYER SKIN</h2><div class="row-flex" style="margin-bottom:10px"><button id="skinAutoBtn">AUTO DAILY</button><span class="muted" id="skinInfo"></span></div><div class="skin-grid" id="skinTable"></div></section>
+    </div>
+  </main>
+</div>
+<div class="sr-only" id="railAnnouncer" aria-live="polite"></div>
+
+<div id="dock" role="region" aria-label="preview player">
   <button id="dockBtn" title="play/pause" aria-label="play">&#9654;&#65039;</button>
   <span class="title" id="dockTitle"></span>
   <input type="range" id="dockSeek" min="0" max="1000" value="0" aria-label="seek preview position">
-  <span class="time" id="dockTime">0:00 / 0:00</span>
+  <span class="time" id="dockTime" aria-live="off">0:00 / 0:00</span>
   <button id="dockClose" title="close" aria-label="close preview">&#10060;</button>
 </div>
 
@@ -271,7 +305,7 @@
     document.querySelectorAll('[data-prev]').forEach((b) => {
       const playing = b.dataset.prev === previewKey && !pa.paused;
       b.textContent = playing ? '\u23F8\uFE0F' : '\u25B6\uFE0F';
-      b.setAttribute('aria-label', playing ? 'pause preview' : 'preview');
+      b.setAttribute('aria-label', (playing ? 'pause ' : 'preview ') + (b.dataset.title || 'audio'));
     });
     $('dockBtn').textContent = pa.paused ? '\u25B6\uFE0F' : '\u23F8\uFE0F';
     $('dockBtn').setAttribute('aria-label', pa.paused ? 'play' : 'pause');
@@ -303,7 +337,7 @@
   $('dockBtn').addEventListener('click', () => { if (previewKey) pa.paused ? pa.play() : pa.pause(); });
   $('dockClose').addEventListener('click', closePreview);
   const prevBtn = (url, title) =>
-    '<button data-prev="' + escAttr(url) + '" data-title="' + escAttr(title) + '" title="preview" aria-label="preview">\u25B6\uFE0F</button>';
+    '<button data-prev="' + escAttr(url) + '" data-title="' + escAttr(title) + '" title="preview" aria-label="preview ' + escAttr(title) + '">\u25B6\uFE0F</button>';
   const api = async (path, options) => {
     const res = await fetch(path, options);
     const body = await res.json().catch(() => ({}));
@@ -358,6 +392,171 @@
       + (part ? ' (part ' + part[1] + ')' : '');
   };
 
+  const domRendered = {};
+  const setHtml = (key, el, html) => {
+    if (domRendered[key] === html) return;
+    domRendered[key] = html;
+    el.innerHTML = html;
+  };
+  let stateReceivedAt = 0;
+  let autoReceivedAt = 0;
+  let stateFailures = 0;
+  let callsFilter = 'inbox';
+  let lastRailAnnouncement = '';
+  let lastRailAnnouncementAt = 0;
+  const maskFrom = (f) => {
+    const digits = String(f || '').replace(/\D/g, '');
+    return digits.length >= 4 ? '\u2022\u2022\u2022-' + digits.slice(-4) : (f || 'unknown');
+  };
+  const statusClass = (s) => ['FAILED', 'CANCELED', 'REJECTED'].includes(s) ? 'bad'
+    : ['GENERATING', 'VALIDATING', 'DRAFT', 'NEEDS_REVIEW', 'QUARANTINED'].includes(s) ? 'warn'
+      : ['READY', 'ELIGIBLE', 'PLAYING', 'CLAIMED', 'COMPLETED', 'AIRED'].includes(s) ? 'ready' : '';
+  const cueGlyph = (type) => {
+    const t = String(type || '').toLowerCase();
+    if (t.includes('hotline')) return ['\u260E', 'hotline'];
+    if (t.includes('comment') || t.includes('speech') || t.includes('spoken')) return ['\u{1F399}', 'spoken'];
+    if (t.includes('rerun')) return ['\u{1F4FC}', 'station'];
+    if (t.includes('station') || t.includes('ident')) return ['\u25C8', 'station'];
+    if (t.includes('live')) return ['\u{1F399}', 'hotline'];
+    return ['\u266A', 'music'];
+  };
+
+  function announceRail(text) {
+    const now = Date.now();
+    if (!text || text === lastRailAnnouncement || now - lastRailAnnouncementAt < 10_000) return;
+    lastRailAnnouncement = text;
+    lastRailAnnouncementAt = now;
+    $('railAnnouncer').textContent = text;
+  }
+
+  function renderRail() {
+    const bot = (state && state.bot) || {};
+    const snap = bot.snapshot || {};
+    const rerun = bot.rerun || {};
+    const q = auto.queue;
+    const current = q && (q.cues || []).find((c) => c.state === 'PLAYING' || c.state === 'CLAIMED');
+    const botOffline = !state || Boolean(bot.error) || !bot.snapshot;
+    const airing = bot.voicemails && bot.voicemails.airing;
+    const rec = rerun.playing && (state.recordings || []).find((r) => r.file === rerun.playing);
+    let air = 'OFF AIR', source = rerun.owner === 'automation' ? 'AUTOMATION' : 'LEGACY';
+    let type = 'STATION', title = 'station state unavailable', artist = '', glyph = '\u25C8';
+    let offset = 0, duration = 0;
+    if (!botOffline) {
+      if (snap.humans > 0) {
+        air = 'ON AIR'; type = 'LIVE MICROPHONES'; glyph = '\u{1F399}';
+        title = (snap.members || []).join(', ') || snap.humans + ' in channel';
+        artist = airing ? 'hotline / announcement airing' : 'live from Discord';
+      } else if (airing) {
+        air = 'INTERMISSION'; type = 'HOTLINE / ANNOUNCEMENT'; glyph = '\u260E'; title = 'airing now'; artist = 'station overlay';
+      } else if (current) {
+        air = 'INTERMISSION';
+        const cg = cueGlyph(current.type); glyph = cg[0];
+        type = String(current.type || 'CUE').toUpperCase() + ' \u00b7 ' + current.state;
+        title = (current.public_metadata && current.public_metadata.title) || current.type || 'automation cue';
+        artist = (current.public_metadata && current.public_metadata.artist) || 'automation playout';
+        offset = current.last_offset_ms || 0; duration = current.planned_duration_ms || 0;
+      } else if (rerun.playing) {
+        air = 'RERUN'; type = 'ARCHIVE RERUN \u00b7 PLAYING'; glyph = '\u{1F4FC}'; title = fmtSession(rerun.playing);
+        artist = 'from the anomaly.fm archive'; offset = (rerun.position || 0) * 1000;
+        duration = rec && rec.meta ? (rec.meta.durationSeconds || 0) * 1000 : 0;
+      } else if (snap.live || bot.music) {
+        air = 'INTERMISSION'; type = 'LOOPING BED'; glyph = '\u266A';
+        title = (bot.music && bot.music.track) || 'music through the static'; artist = 'fallback safety loop';
+      } else {
+        title = 'off air'; artist = 'Discord voice is disconnected';
+      }
+    } else {
+      air = 'OFFLINE'; source = 'UNREACHABLE'; type = 'STATION'; title = 'station state unreachable'; artist = 'controls disabled until state returns';
+    }
+    $('airBadge').textContent = air;
+    $('airBadge').className = 'status-chip air-badge ' + (air === 'ON AIR' ? 'live' : air === 'OFFLINE' ? 'warn' : 'auto');
+    $('sourceBadge').textContent = auto.down && source === 'AUTOMATION' ? 'AUTO OFFLINE' : source;
+    $('cueGlyph').textContent = glyph; $('cueType').textContent = type; $('nowLine').textContent = title; $('nowSub').textContent = artist;
+    $('nowCard').classList.toggle('offline', botOffline);
+    const hasProgress = duration > 0;
+    $('cueProgress').hidden = !hasProgress;
+    if (hasProgress) {
+      const percent = Math.max(0, Math.min(100, offset / duration * 100));
+      $('progressFill').style.width = percent + '%'; $('progressBar').setAttribute('aria-valuenow', String(Math.round(percent)));
+      $('progressNow').textContent = '~' + fmtT(offset / 1000); $('progressEnd').textContent = fmtT(duration / 1000);
+    }
+    const L = bot.listeners || {};
+    $('railListeners').textContent = (L.total ?? '\u2014') + ' (' + (L.web ?? '\u2014') + ' web \u00b7 ' + (L.youtube ?? '\u2014') + ' yt)';
+    $('railHumans').textContent = botOffline ? '\u2014' : (snap.humans || 0) + ' in channel';
+    $('railQueue').textContent = q && !auto.down ? q.ready_count + ' READY \u00b7 ' + Math.round((q.ready_duration_ms || 0) / 60000) + 'm' : '\u2014';
+    $('railQueue').style.color = q && q.ready_count === 0 ? '#f0af8f' : '';
+    $('railRerun').textContent = rerun.available === false ? 'OFFLINE' : rerun.auto === true ? 'ON' : rerun.auto === false ? 'OFF' : '\u2014';
+    const f = q && q.flags || {};
+    $('railFlags').textContent = 'DJ ' + ((auto.dj && auto.dj.mode) || '\u2014') + ' \u00b7 playout ' + (f.playout_enabled ? 'ON' : 'OFF') + ' \u2014 env flags, change requires a deploy.';
+    $('skipBtn').hidden = !rerun.playing; $('skipBtn').disabled = botOffline || rerun.available === false;
+    $('announceBtn').disabled = botOffline;
+    $('railWarning').hidden = !auto.down || botOffline;
+    $('railWarning').textContent = auto.down ? '\u26A0 automation offline; legacy station state remains available' : '';
+    if (!(source === 'AUTOMATION' && !auto.queue && !auto.down)) {
+      announceRail((air === 'ON AIR' ? 'Live: ' : 'Now playing: ') + title + (auto.down ? '. Automation offline.' : ''));
+    }
+    renderFreshness();
+  }
+
+  function renderFreshness() {
+    const age = stateReceivedAt ? Math.floor((Date.now() - stateReceivedAt) / 1000) : null;
+    const autoAge = autoReceivedAt ? Math.floor((Date.now() - autoReceivedAt) / 1000) : null;
+    const stale = age === null || age > 12 || stateFailures >= 2 || (!auto.down && autoAge !== null && autoAge > 12);
+    $('freshness').textContent = age === null ? 'waiting for state' : (stale ? 'stale state ' : 'updated state ') + age + 's'
+      + (autoAge === null ? '' : ' \u00b7 auto ' + autoAge + 's');
+    $('freshness').classList.toggle('stale', stale);
+  }
+
+  function renderCalls() {
+    if (!state) return;
+    const bot = state.bot || {};
+    const vms = state.voicemails || [];
+    const candidates = (auto.hotline && auto.hotline.items) || [];
+    const normalize = (s) => String(s || '').replace(/\.mp3$/, '');
+    const map = new Map();
+    vms.forEach((v) => map.set(normalize(v.file), { key: normalize(v.file), vm: v, candidate: null }));
+    candidates.forEach((c) => {
+      const key = normalize(c.call_id);
+      const exact = map.get(key);
+      if (exact) exact.candidate = c;
+      else map.set(key, { key, vm: null, candidate: c });
+    });
+    const rows = [...map.values()].sort((a, b) => b.key.localeCompare(a.key));
+    const reviewCount = candidates.filter((c) => c.status === 'NEEDS_REVIEW').length;
+    $('callsCount').textContent = String(reviewCount); $('callsCount').hidden = reviewCount === 0;
+    $('hotlineMini').textContent = reviewCount + ' awaiting review \u00b7 ' + vms.filter((v) => !(v.meta && v.meta.archived)).length + ' in inbox';
+    const vmQ = (bot.voicemails && bot.voicemails.queue) || [];
+    $('vmQueueInfo').textContent = (bot.voicemails && bot.voicemails.airing ? 'AIRING NOW \u00b7 ' : '')
+      + (vmQ.length ? 'on-air queue: ' + vmQ.map(fmtSession).join(', ') : 'on-air queue empty');
+    document.querySelectorAll('[data-callfilter]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.callfilter === callsFilter)));
+    const shown = rows.filter(({ vm, candidate }) => callsFilter === 'all' ? true
+      : callsFilter === 'review' ? candidate && candidate.status === 'NEEDS_REVIEW'
+        : vm && !(vm.meta && vm.meta.archived));
+    const HL_BADGE = { ELIGIBLE: '\u2705 ELIGIBLE', NEEDS_REVIEW: '\u{1F50D} NEEDS REVIEW', REJECTED: '\u274C REJECTED', QUEUED: '\u{1F4E1} QUEUED', AIRED: '\u2714\uFE0F AIRED', ARCHIVED: '\u{1F5C4}\uFE0F ARCHIVED' };
+    const cards = shown.map(({ key, vm, candidate: c }) => {
+      const archived = Boolean(vm && vm.meta && vm.meta.archived);
+      const transcript = c && c.transcript !== undefined ? c.transcript : vm && vm.meta && vm.meta.transcript;
+      const actions = [];
+      if (c && (c.status === 'NEEDS_REVIEW' || c.status === 'REJECTED')) actions.push('<button data-hlact="approve" data-hlid="' + escAttr(c.candidate_id) + '" data-hlver="' + escAttr(c.moderation_version) + '">\u2705 APPROVE</button>');
+      if (c && ['ELIGIBLE','NEEDS_REVIEW','QUEUED'].includes(c.status)) actions.push('<button class="danger" data-two-step="REALLY?" data-hlact="reject" data-hlid="' + escAttr(c.candidate_id) + '" data-hlver="' + escAttr(c.moderation_version) + '">\u274C REJECT</button>');
+      if (c && c.status === 'ARCHIVED' && !c.aired_at) actions.push('<button data-hlact="restore" data-hlid="' + escAttr(c.candidate_id) + '" data-hlver="' + escAttr(c.moderation_version) + '">\u21A9\uFE0F RESTORE</button>');
+      const inboxActions = vm ? prevBtn('/api/voicemails/' + encodeURIComponent(vm.file) + '/audio', 'voicemail \u00b7 ' + fmtSession(vm.file))
+        + '<button data-vmair="' + escAttr(vm.file) + '">\u{1F4E1} AIR NOW</button>'
+        + (archived ? '<button data-vmarch="' + escAttr(vm.file) + '" data-flag="false">\u21A9\uFE0F RESTORE</button><button class="danger" data-vmdel="' + escAttr(vm.file) + '">\u{1F5D1}\uFE0F DELETE FOREVER</button>'
+          : '<button class="danger" data-two-step="REALLY?" data-vmarch="' + escAttr(vm.file) + '" data-flag="true">\u{1F5C4}\uFE0F ARCHIVE</button>') : '<span class="muted">private inbox item unavailable</span>';
+      const when = fmtSession((vm && vm.file) || key + '.mp3');
+      const duration = vm && vm.meta ? fmtDur(vm.meta.durationSeconds) : c ? fmtMs(c.duration_ms) : '?';
+      return '<article class="call-card"><div class="call-head"><strong>' + esc(when) + (vm ? ' \u00b7 ' + esc(maskFrom(vm.meta && vm.meta.from)) : '') + '</strong>'
+        + '<span class="entity-meta">' + duration + (vm ? ' \u00b7 ' + fmtSize(vm.bytes) : '') + '</span>'
+        + (c ? '<span class="badge ' + statusClass(c.status) + '">' + (HL_BADGE[c.status] || esc(c.status)) + '</span>' : '<span class="badge">AI UNAVAILABLE</span>') + '</div>'
+        + '<div class="transcript">\u{1F5D2}\uFE0F ' + (transcript ? '\u201c' + esc(transcript) + '\u201d' : transcript === '' ? '(no speech detected)' : 'transcribing\u2026') + '</div>'
+        + '<div class="call-groups"><div><div class="action-label">PRIVATE INBOX</div><div class="actions" style="justify-content:flex-start">' + inboxActions + '</div></div>'
+        + '<div><div class="action-label">AI REVIEW' + (c ? ' \u00b7 ' + esc(c.screen_result || 'NO SCREEN') + ' \u00b7 v' + esc(c.moderation_version) : '') + '</div><div class="actions" style="justify-content:flex-start">' + (actions.join('') || '<span class="muted">no review action</span>') + '</div></div></div></article>';
+    }).join('');
+    setHtml('calls', $('callsList'), cards || '<p class="muted">no calls in this view</p>');
+    updatePreviewButtons();
+  }
+
   function render() {
     if (!state) return;
     const bot = state.bot || {};
@@ -369,27 +568,13 @@
     };
     const skinControl = skin.control || { available: true, message: null };
 
-    // now
-    let line;
-    if (snap.humans > 0) line = 'ON AIR \u2014 ' + (snap.members || []).join(', ');
-    else if (rerun.playing) line = 'RERUN \u2014 ' + rerun.playing + ' @ ' + fmtDur(rerun.position);
-    else if (snap.live) line = 'INTERMISSION \u2014 music through the static';
-    else line = 'OFF AIR';
-    $('nowLine').textContent = line;
-    const L = bot.listeners || {};
-    $('nowSub').textContent =
-      'music: ' + ((bot.music && bot.music.state) || '?') + ' (' + ((bot.music && bot.music.track) || 'none') + ')'
-      + ' \u00b7 listeners: ' + (L.total ?? '?')
-      + ' (web ' + (L.web ?? '?') + ' \u00b7 youtube ' + (L.youtube ?? '\u2013') + ')';
-
     // rerun
     const automationReruns = rerun.owner === 'automation';
     const rerunAvailable = rerun.available !== false;
-    $('autoBtn').textContent = '\u{1F501} ' + (automationReruns ? 'AUTOMATION' : 'LEGACY') + ' AUTO: '
-      + (!rerunAvailable ? 'OFFLINE' : rerun.auto ? 'ON' : 'OFF');
+    $('rerunOwner').textContent = 'OWNER ' + (automationReruns ? 'AUTOMATION' : 'LEGACY');
+    $('autoBtn').textContent = '\u{1F501} AUTO: ' + (!rerunAvailable ? 'OFFLINE' : rerun.auto ? 'ON' : 'OFF');
     $('autoBtn').disabled = !rerunAvailable;
     $('autoBtn').setAttribute('aria-pressed', rerun.auto === true ? 'true' : 'false');
-    $('skipBtn').textContent = '\u23ED\uFE0F SKIP CURRENT';
     $('skipBtn').disabled = !rerunAvailable || !rerun.playing;
     $('uploadBtn').textContent = '\u2B06\uFE0F UPLOAD TRACK';
     const bits = [];
@@ -399,66 +584,32 @@
     if (!rerunAvailable) bits.push('automation rerun controls offline');
     else if (automationReruns && !rerun.auto) bits.push('automatic filler held; an explicit operator queue still bypasses OFF');
     $('pausedInfo').textContent = bits.join(' \u00b7 ');
-    $('queueTable').querySelector('tbody').innerHTML = (rerun.queue || []).length
+    setHtml('rerun-queue', $('queueTable'), (rerun.queue || []).length
       ? rerun.queue.map((f, i) =>
-          '<tr><td>' + (i + 1) + '. ' + esc(fmtSession(f)) + '</td><td style="text-align:right"><button data-unqueue="' + i + '" title="remove from queue">\u2796 REMOVE</button></td></tr>').join('')
-      : '<tr><td class="muted">queue empty' + (rerun.auto ? ' \u2014 rotation plays the oldest unaired session' : '') + '</td></tr>';
-
-    // hotline
-    const vms = state.voicemails || [];
-    const vmQ = (bot.voicemails && bot.voicemails.queue) || [];
-    $('vmQueueInfo').textContent = (bot.voicemails && bot.voicemails.airing ? 'AIRING NOW \u00b7 ' : '')
-      + (vmQ.length ? 'on-air queue: ' + vmQ.map(fmtSession).join(', ') : 'on-air queue empty')
-      + ' \u00b7 ' + vms.filter((v) => !(v.meta && v.meta.archived)).length + ' in inbox';
-    const maskFrom = (f) => {
-      const digits = String(f || '').replace(/\D/g, '');
-      return digits.length >= 4 ? '\u2022\u2022\u2022-' + digits.slice(-4) : (f || 'unknown');
-    };
-    const vmRow = (v, archived) =>
-      '<tr><td title="' + escAttr(v.file) + '">' + esc(fmtSession(v.file)) + '</td>'
-      + '<td class="muted">' + esc(maskFrom(v.meta && v.meta.from)) + '</td>'
-      + '<td>' + (v.meta && v.meta.durationSeconds ? fmtDur(v.meta.durationSeconds) : '?') + '</td>'
-      + '<td>' + fmtSize(v.bytes) + '</td>'
-      + '<td style="text-align:right;white-space:nowrap">'
-      + prevBtn('/api/voicemails/' + encodeURIComponent(v.file) + '/audio', 'voicemail \u00b7 ' + fmtSession(v.file))
-      + '<button data-vmair="' + escAttr(v.file) + '" title="queue on air">\u{1F4E1} AIR</button>'
-      + (archived
-          ? '<button data-vmarch="' + escAttr(v.file) + '" data-flag="false" title="restore" aria-label="restore">\u21A9\uFE0F</button><button class="danger" data-vmdel="' + escAttr(v.file) + '" title="delete forever" aria-label="delete forever">\u{1F5D1}\uFE0F</button>'
-          : '<button data-vmarch="' + escAttr(v.file) + '" data-flag="true" title="archive" aria-label="archive">\u{1F5C4}\uFE0F</button>')
-      + '</td></tr>'
-      + '<tr><td colspan="5" style="border-top:none;padding-top:0;font-size:.78rem;color:var(--brown-dim);font-style:italic">'
-      + (v.meta && v.meta.transcript ? '\u{1F5D2}\uFE0F \u201C' + esc(v.meta.transcript) + '\u201D'
-         : v.meta && v.meta.transcript === '' ? '\u{1F5D2}\uFE0F (no speech detected)'
-         : '\u{1F5D2}\uFE0F transcribing\u2026')
-      + '</td></tr>';
-    const inbox = vms.filter((v) => !(v.meta && v.meta.archived));
-    const archived = vms.filter((v) => v.meta && v.meta.archived);
-    $('vmTable').querySelector('tbody').innerHTML =
-      inbox.map((v) => vmRow(v, false)).join('') || '<tr><td class="muted" colspan="5">no messages yet \u2014 call the hotline</td></tr>';
-    $('vmArchTable').querySelector('tbody').innerHTML =
-      archived.map((v) => vmRow(v, true)).join('') || '<tr><td class="muted">nothing archived</td></tr>';
+          '<div class="entity-row"><div class="entity-main"><strong>' + (i + 1) + '. ' + esc(fmtSession(f)) + '</strong></div><div class="actions"><button data-unqueue="' + i + '" title="remove from queue">\u2796 REMOVE</button></div></div>').join('')
+      : '<p class="muted">queue empty' + (rerun.auto ? ' \u2014 rotation plays the oldest unaired session' : '') + '</p>');
 
     // archive
-    $('recTable').querySelector('tbody').innerHTML = (state.recordings || []).map((r) => {
+    setHtml('recordings', $('recTable'), (state.recordings || []).map((r) => {
       const who = r.meta && r.meta.members ? r.meta.members.join(', ') : (r.meta ? '' : 'recording\u2026');
       const len = r.meta ? fmtDur(r.meta.durationSeconds) : '';
-      return '<tr><td title="' + escAttr(r.file) + '">' + esc(fmtSession(r.file)) + '</td><td class="muted">' + esc(who) + '</td><td>' + len + '</td><td>' + fmtSize(r.bytes) + '</td>'
-        + '<td style="text-align:right;white-space:nowrap">'
+      return '<div class="entity-row"><div class="entity-main" title="' + escAttr(r.file) + '"><strong>' + esc(fmtSession(r.file)) + '</strong><span class="entity-meta">' + esc(who) + '</span></div><span>' + len + '</span><span class="entity-meta">' + fmtSize(r.bytes) + '</span>'
+        + '<div class="actions">'
         + prevBtn('/api/recordings/' + encodeURIComponent(r.file) + '/audio', 'session \u00b7 ' + fmtSession(r.file))
         + '<button data-mp4="' + escAttr(r.file) + '" title="' + (r.mp4 ? 'download mp4' : 'render + download mp4') + '">'
         + (mp4Poll.has(r.file) ? '\u23F3 MP4' : (r.mp4 ? '\u2B07\uFE0F MP4' : '\u{1F3AC} MP4')) + '</button>'
         + '<button data-cue="' + escAttr(r.file) + '" title="cue rerun">\u2795 CUE</button>'
-        + '<button class="danger" data-del="' + escAttr(r.file) + '" title="delete" aria-label="delete recording">\u{1F5D1}\uFE0F</button></td></tr>';
-    }).join('') || '<tr><td class="muted">no recordings yet</td></tr>';
+        + '<button class="danger" data-del="' + escAttr(r.file) + '" title="delete" aria-label="delete recording ' + escAttr(fmtSession(r.file)) + '">\u{1F5D1}\uFE0F DELETE</button></div></div>';
+    }).join('') || '<p class="muted">no recordings yet</p>');
 
     // music
     const active = bot.music && bot.music.track;
-    $('musicTable').querySelector('tbody').innerHTML = (state.music || []).map((m) =>
-      '<tr><td' + (m.file === active ? ' class="active"' : '') + '>' + esc(m.file) + (m.file === active ? ' \u2190 active' : '') + '</td>'
-      + '<td>' + fmtSize(m.bytes) + '</td><td style="text-align:right;white-space:nowrap">'
+    setHtml('music', $('musicTable'), (state.music || []).map((m) =>
+      '<div class="entity-row"><div class="entity-main' + (m.file === active ? ' active' : '') + '"><strong>' + esc(m.file) + (m.file === active ? ' \u2190 active' : '') + '</strong></div>'
+      + '<span class="entity-meta">' + fmtSize(m.bytes) + '</span><div class="actions">'
       + prevBtn('/api/music/' + encodeURIComponent(m.file) + '/audio', 'bed \u00b7 ' + m.file)
-      + (m.file === active ? '' : '<button data-activate="' + escAttr(m.file) + '" title="make active bed">\u2705 ACTIVATE</button><button class="danger" data-delmusic="' + escAttr(m.file) + '" title="delete" aria-label="delete track">\u{1F5D1}\uFE0F</button>')
-      + '</td></tr>').join('') || '<tr><td class="muted">no tracks</td></tr>';
+      + (m.file === active ? '' : '<button data-activate="' + escAttr(m.file) + '" title="make active bed">\u2705 ACTIVATE</button><button class="danger" data-delmusic="' + escAttr(m.file) + '" title="delete" aria-label="delete track ' + escAttr(m.file) + '">\u{1F5D1}\uFE0F DELETE</button>')
+      + '</div></div>').join('') || '<p class="muted">no tracks</p>');
 
     // web player skins
     $('skinAutoBtn').textContent = skin.mode === 'daily' ? '\u2705 AUTO DAILY' : '\u{1F504} AUTO DAILY';
@@ -467,29 +618,34 @@
     $('skinInfo').textContent = !skinControl.available ? skinControl.message : skin.mode === 'manual'
       ? 'manual selection is pinned across restarts'
       : 'today: ' + (skin.daily || 'no skin available');
-    $('skinTable').querySelector('tbody').innerHTML = (skin.available || []).map((name) => {
+    setHtml('skins', $('skinTable'), (skin.available || []).map((name) => {
       const isActive = name === skin.active;
       const isDaily = name === skin.daily;
-      return '<tr><td' + (isActive ? ' class="active"' : '') + '>' + esc(name)
-        + (isActive ? ' \u2190 active' : '') + (isDaily ? ' <span class="muted">(today)</span>' : '') + '</td>'
-        + '<td style="text-align:right;white-space:nowrap">'
+      return '<div class="skin-card"><strong' + (isActive ? ' class="active"' : '') + '>' + esc(name) + '</strong>'
+        + '<div class="entity-meta">' + (isActive ? '\u2705 active ' : '') + (isDaily ? '\u00b7 today' : '') + '</div><div class="actions">'
         + '<button data-skinpreview="' + escAttr(name) + '" title="open without changing the active skin">\u{1F441}\uFE0F PREVIEW</button>'
         + (isActive && skin.mode === 'manual' ? '' : '<button data-skinactivate="' + escAttr(name) + '" title="'
           + escAttr(skinControl.message || 'pin this skin') + '"' + (skinControl.available ? '' : ' disabled') + '>\u2705 ACTIVATE</button>')
-        + '</td></tr>';
-    }).join('') || '<tr><td class="muted">no skins found</td></tr>';
+        + '</div></div>';
+    }).join('') || '<p class="muted">no skins found</p>');
+    renderCalls();
+    renderRail();
     updatePreviewButtons();
   }
 
   async function refresh() {
-    try { state = await api('/api/state'); render(); } catch { /* toast already shown */ }
+    try { state = await api('/api/state'); stateReceivedAt = Date.now(); stateFailures = 0; render(); }
+    catch { stateFailures += 1; renderRail(); }
   }
 
   // --- audience chart: hourly samples, web vs youtube, last 7 days ---
+  let audienceSamples = [];
   async function loadAudience() {
+    if (document.hidden) return;
     try {
       const r = await api('/api/audience?hours=168');
-      drawAudience(r.samples || []);
+      audienceSamples = r.samples || [];
+      drawAudience(audienceSamples);
     } catch { /* toast already shown */ }
   }
   function drawAudience(samples) {
@@ -504,9 +660,11 @@
     const now = Date.now(), t0 = now - 168 * 3600e3;
     const X = (t) => padL + ((t - t0) / (now - t0)) * (w - padL - padR);
     if (samples.length < 2) {
-      g.fillStyle = '#8a7458'; g.font = '12px Inter';
+      g.fillStyle = '#6f5d45'; g.font = '12px Inter';
       g.fillText('collecting hourly samples \u2014 first chart points appear within the hour', padL, h / 2);
       $('audStats').textContent = '';
+      $('audienceMini').textContent = 'collecting hourly samples';
+      setHtml('aud-table', $('audTable').querySelector('tbody'), '<tr><td colspan="5">collecting hourly samples</td></tr>');
       return;
     }
     const yMax = Math.max(4, ...samples.map((s) => s.total ?? 0)) * 1.15;
@@ -559,6 +717,11 @@
       '<span style="color:#17140f">\u2014 total</span> \u00b7 <span style="color:#3e968f">\u2014 web</span> \u00b7 '
       + '<span style="color:#c96a4a">\u2014 youtube</span> \u00b7 \u25aa live show \u00b7 '
       + 'peak ' + peak + ' \u00b7 avg ' + avg + ' \u00b7 ' + samples.length + ' hourly samples';
+    $('audienceMini').textContent = 'peak ' + peak + ' \u00b7 avg ' + avg + ' \u00b7 ' + samples.length + ' samples';
+    setHtml('aud-table', $('audTable').querySelector('tbody'), samples.slice().reverse().map((s) => '<tr><td>'
+      + esc(new Date(s.t).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric' })) + '</td><td>'
+      + esc(s.total ?? '\u2014') + '</td><td>' + esc(s.web ?? '\u2014') + '</td><td>' + esc(s.youtube ?? '\u2014')
+      + '</td><td>' + (s.humans > 0 ? '\u25AA live' : '\u2014') + '</td></tr>').join(''));
   }
 
   // --- automation panels (asset library / AI queue / AI DJ / hotline AI) ---
@@ -593,12 +756,17 @@
   function markAutomationDown(message) {
     auto.down = message || AUTO_DOWN_MSG;
     for (const id of ['hlaiInfo', 'libInfo', 'aqNow', 'djInfo']) $(id).textContent = '\u26A0\uFE0F ' + auto.down;
-    for (const id of ['libUploadBtn', 'aqCommentBtn', 'aqRefreshBtn', 'libSearchBtn', 'libMoreBtn']) $(id).disabled = true;
+    for (const id of ['libUploadBtn', 'aqCommentBtn', 'libSearchBtn', 'libMoreBtn']) $(id).disabled = true;
+    $('aqNow').hidden = false;
+    $('aqTable').style.opacity = '.55';
+    renderRail(); renderCalls();
   }
   function markAutomationUp() {
     if (auto.down === null) return;
     auto.down = null;
-    for (const id of ['libUploadBtn', 'aqCommentBtn', 'aqRefreshBtn', 'libSearchBtn', 'libMoreBtn']) $(id).disabled = false;
+    for (const id of ['libUploadBtn', 'aqCommentBtn', 'libSearchBtn', 'libMoreBtn']) $(id).disabled = false;
+    $('aqNow').hidden = true;
+    $('aqTable').style.opacity = '';
   }
 
   const STATE_BADGE = {
@@ -615,10 +783,7 @@
       const cues = q.cues || [];
       const current = cues.find((c) => c.state === 'PLAYING' || c.state === 'CLAIMED');
       const label = (c) => (c.public_metadata && c.public_metadata.title) || c.type;
-      $('aqNow').textContent = current
-        ? 'NOW: ' + badge(current.state).replace(/^[^ ]+ /, '') + ' \u2014 ' + label(current)
-          + ' @ ' + fmtMs(current.last_offset_ms) + ' / ' + fmtMs(current.planned_duration_ms)
-        : 'no cue is claimed or playing';
+      $('aqNow').textContent = current ? 'current cue is shown in the ON AIR rail' : 'no cue is claimed or playing';
       const readyMin = Math.round((q.ready_duration_ms || 0) / 60000);
       $('aqInfo').textContent = 'revision ' + q.queue_revision + ' \u00b7 ' + q.ready_count + ' READY ('
         + readyMin + 'm) \u00b7 ' + q.generating_count + ' generating \u00b7 '
@@ -629,12 +794,13 @@
         ? 'playout flag ON \u2014 the bot claims these cues when nobody is live'
         : 'playout flag OFF \u2014 queue is durable but nothing airs from it yet (env change required)';
       const upcoming = cues.filter((c) => c !== current);
-      $('aqTable').querySelector('tbody').innerHTML = upcoming.length
+      setHtml('automation-queue', $('aqTable'), upcoming.length
         ? upcoming.map((c, i) =>
-            '<tr><td>' + (i + 1) + '</td><td>' + esc(c.type) + (c.role ? ' <span class="muted">(' + esc(c.role) + ')</span>' : '') + '</td>'
-            + '<td>' + esc(label(c)) + (c.public_metadata && c.public_metadata.artist ? ' <span class="muted">\u2014 ' + esc(c.public_metadata.artist) + '</span>' : '') + '</td>'
-            + '<td>' + fmtMs(c.planned_duration_ms) + '</td><td>' + badge(c.state) + '</td></tr>').join('')
-        : '<tr><td class="muted" colspan="5">queue empty</td></tr>';
+            '<div class="cue-row"><span class="idx">' + (i + 1) + '</span><span class="glyph ' + cueGlyph(c.type)[1] + '" aria-hidden="true">' + cueGlyph(c.type)[0] + '</span>'
+            + '<span class="title"><strong>' + esc(label(c)) + '</strong><span class="entity-meta">' + esc(c.type) + (c.role ? ' \u00b7 ' + esc(c.role) : '')
+            + (c.public_metadata && c.public_metadata.artist ? ' \u00b7 ' + esc(c.public_metadata.artist) : '') + '</span></span>'
+            + '<span class="len">' + fmtMs(c.planned_duration_ms) + '</span><span class="badge ' + statusClass(c.state) + '">' + badge(c.state) + '</span></div>').join('')
+        : '<p class="muted">queue empty \u2014 the station will fall back to its safety bed</p>');
     });
     const ev = (auto.events && auto.events.items) || [];
     renderIfChanged('aqev', ev, () => {
@@ -645,6 +811,8 @@
             + '<td>' + esc(e2.title || e2.type || '') + '</td></tr>').join('')
         : '<tr><td class="muted">no events yet</td></tr>';
     });
+    autoReceivedAt = Date.now();
+    renderRail();
   }
 
   function renderDjPanel() {
@@ -677,30 +845,29 @@
   }
 
   function renderLibraryPanel() {
-    renderIfChanged('lib', { items: auto.lib.items, cursor: auto.lib.cursor }, () => {
+    renderIfChanged('lib', { items: auto.lib.items, cursor: auto.lib.cursor, search: auto.lib.search }, () => {
       const items = auto.lib.items;
       $('libInfo').textContent = items.length
         ? items.length + ' assets loaded' + (auto.lib.cursor ? ' (more available)' : '') + (auto.lib.search ? ' \u00b7 search: \u201C' + auto.lib.search + '\u201D' : '')
         : 'library empty \u2014 upload a track or run the existing-music import';
       $('libMoreBtn').hidden = !auto.lib.cursor;
       const ASSET_BADGE = { READY: '\u2705 READY', PROCESSING: '\u23F3 PROCESSING', QUARANTINED: '\u26A0\uFE0F QUARANTINED', FAILED: '\u26A0\uFE0F FAILED', RETIRED: '\u274C RETIRED' };
-      $('libTable').querySelector('tbody').innerHTML = items.length
+      setHtml('library', $('libTable'), items.length
         ? items.map((a) =>
-            '<tr><td>' + esc(a.title || '?') + '</td><td class="muted">' + esc(a.artist || '\u2014') + '</td>'
-            + '<td class="muted">' + esc((a.tags || []).join(', ') || '\u2014') + '</td>'
-            + '<td>' + fmtMs(a.duration_ms) + '</td><td>' + (ASSET_BADGE[a.status] || esc(a.status)) + '</td>'
-            + '<td style="text-align:right;white-space:nowrap">'
+            '<div class="entity-row"><div class="entity-main"><strong>' + esc(a.title || '?') + '</strong><span class="entity-meta">' + esc(a.artist || '\u2014') + ' \u00b7 ' + esc((a.tags || []).join(', ') || 'no tags') + '</span></div>'
+            + '<span>' + fmtMs(a.duration_ms) + '</span><span class="badge ' + statusClass(a.status) + '">' + (ASSET_BADGE[a.status] || esc(a.status)) + '</span>'
+            + '<div class="actions">'
              + (a.status === 'READY' && a.kind === 'music'
-                 ? prevBtn('/api/automation/assets/' + encodeURIComponent(a.asset_id) + '/audio', 'library \u00b7 ' + (a.title || a.asset_id))
-                   + '<button data-aqtrack="' + escAttr(a.asset_id) + '" data-aqtitle="' + escAttr(a.title || '') + '" title="append to the AI queue">\u2795 QUEUE</button>'
-                 : '')
-             + (a.kind === 'music' && a.status === 'READY'
-                 ? '<button class="danger" data-assetact="retire" data-assetid="' + escAttr(a.asset_id) + '" data-assettitle="' + escAttr(a.title || a.asset_id) + '" aria-label="archive ' + escAttr(a.title || a.asset_id) + '" title="archive this asset without deleting its audio">\u{1F5C4}\uFE0F ARCHIVE</button>'
-                 : a.kind === 'music' && a.status === 'RETIRED'
-                   ? '<button data-assetact="restore" data-assetid="' + escAttr(a.asset_id) + '" data-assettitle="' + escAttr(a.title || a.asset_id) + '" aria-label="restore ' + escAttr(a.title || a.asset_id) + '" title="revalidate retained audio and restore this asset">\u21A9\uFE0F RESTORE</button>'
-                   : '')
-             + '</td></tr>').join('')
-        : '<tr><td class="muted" colspan="6">no assets</td></tr>';
+                  ? prevBtn('/api/automation/assets/' + encodeURIComponent(a.asset_id) + '/audio', 'library \u00b7 ' + (a.title || a.asset_id))
+                    + '<button data-aqtrack="' + escAttr(a.asset_id) + '" data-aqtitle="' + escAttr(a.title || '') + '" title="append to the AI queue">\u2795 QUEUE</button>'
+                  : '')
+              + (a.kind === 'music' && a.status === 'READY'
+                  ? '<button class="danger" data-two-step="REALLY?" data-assetact="retire" data-assetid="' + escAttr(a.asset_id) + '" data-assettitle="' + escAttr(a.title || a.asset_id) + '" aria-label="archive ' + escAttr(a.title || a.asset_id) + '" title="archive this asset without deleting its audio">\u{1F5C4}\uFE0F ARCHIVE</button>'
+                  : a.kind === 'music' && a.status === 'RETIRED'
+                    ? '<button data-assetact="restore" data-assetid="' + escAttr(a.asset_id) + '" data-assettitle="' + escAttr(a.title || a.asset_id) + '" aria-label="restore ' + escAttr(a.title || a.asset_id) + '" title="revalidate retained audio and restore this asset">\u21A9\uFE0F RESTORE</button>'
+                    : '')
+              + '</div></div>').join('')
+        : '<p class="muted">no assets</p>');
       updatePreviewButtons();
     });
   }
@@ -714,29 +881,7 @@
         ? 'hotline automation flag ON'
         : 'hotline automation flag OFF \u2014 candidates are tracked but the DJ cannot see or air any of them (env change required)')
         + ' \u00b7 ' + items.filter((c) => c.dj_visible).length + ' visible to the DJ \u00b7 ' + items.length + ' tracked';
-      const HL_BADGE = { ELIGIBLE: '\u2705 ELIGIBLE', NEEDS_REVIEW: '\u{1F50D} NEEDS REVIEW', REJECTED: '\u274C REJECTED', QUEUED: '\u{1F4E1} QUEUED', AIRED: '\u2714\uFE0F AIRED', ARCHIVED: '\u{1F5C4}\uFE0F ARCHIVED' };
-      const screenText = (c) => c.screen_result === 'PASS' ? 'pass' : c.screen_result === 'BADWORD' ? 'badword match' : c.screen_result === 'PII_UNCERTAIN' ? 'PII uncertain' : 'no transcript';
-      $('hlaiTable').querySelector('tbody').innerHTML = items.length
-        ? items.map((c) => {
-            const actions = [];
-            if (c.status === 'NEEDS_REVIEW' || c.status === 'REJECTED') {
-              actions.push('<button data-hlact="approve" data-hlid="' + escAttr(c.candidate_id) + '" data-hlver="' + escAttr(c.moderation_version) + '" title="make eligible for the AI DJ">\u2705 APPROVE</button>');
-            }
-            if (['ELIGIBLE', 'NEEDS_REVIEW', 'QUEUED'].includes(c.status)) {
-              actions.push('<button class="danger" data-hlact="reject" data-hlid="' + escAttr(c.candidate_id) + '" data-hlver="' + escAttr(c.moderation_version) + '" title="never let the DJ select this call">\u274C REJECT</button>');
-            }
-            if (c.status === 'ARCHIVED' && !c.aired_at) {
-              actions.push('<button data-hlact="restore" data-hlid="' + escAttr(c.candidate_id) + '" data-hlver="' + escAttr(c.moderation_version) + '" title="return this archived call to review">\u21A9\uFE0F RESTORE</button>');
-            }
-            return '<tr><td title="' + escAttr(c.call_id) + '">' + esc(fmtSession(c.call_id + '.mp3')) + '</td>'
-              + '<td>' + (HL_BADGE[c.status] || esc(c.status)) + (c.operator_override ? ' <span class="muted">(operator)</span>' : '') + '</td>'
-              + '<td class="muted">' + esc(screenText(c)) + (c.archive_reason ? ' \u00b7 ' + esc(c.archive_reason) : '') + (c.screen_current ? '' : ' \u00b7 stale policy') + '</td>'
-              + '<td>' + fmtMs(c.duration_ms) + '</td>'
-              + '<td style="text-align:right;white-space:nowrap">' + actions.join('') + '</td></tr>'
-              + '<tr><td colspan="5" style="border-top:none;padding-top:0;font-size:.78rem;color:var(--brown-dim);font-style:italic">\u{1F5D2}\uFE0F '
-              + (c.transcript ? '\u201C' + esc(c.transcript) + '\u201D' : '(no speech detected)') + '</td></tr>';
-          }).join('')
-        : '<tr><td class="muted" colspan="5">no calls imported yet</td></tr>';
+      renderCalls();
     });
   }
 
@@ -806,7 +951,7 @@
     const message = action === 'retire'
       ? 'ARCHIVE “' + label + '”? The audio bytes will be retained. Every queued but unplayed cue that references it will be canceled atomically; a claimed or playing cue will block this action.'
       : 'RESTORE “' + label + '”? The retained audio will be rechecked for path safety, checksum, and decodability before it becomes READY again.';
-    if (!confirm(message)) return;
+    // ARCHIVE uses the inline two-step button; RESTORE is non-destructive.
     try {
       const result = await autoApi('/api/automation/assets/' + encodeURIComponent(assetId) + '/' + action, {
         method: 'POST',
@@ -836,6 +981,7 @@
       });
       toast('\u{1F399}\uFE0F commentary accepted \u2014 rendering to speech');
       $('aqScript').value = '';
+      updateCommentaryCounter();
     } catch (err) {
       if (err.code === 'REVISION_CONFLICT') toast('queue changed underneath you \u2014 refreshed, try again');
     }
@@ -852,7 +998,7 @@
   };
   async function reviewHotline(action, candidateId, version) {
     const candidate = ((auto.hotline && auto.hotline.items) || []).find((c) => c.candidate_id === candidateId) || {};
-    if (HL_CONFIRM[action] && !confirm(HL_CONFIRM[action](candidate))) return;
+    if (action === 'approve' && !confirm(HL_CONFIRM[action](candidate))) return;
     try {
       const r = await autoApi('/api/automation/hotline/review', {
         method: 'POST',
@@ -895,15 +1041,37 @@
     void loadLibrary(true);
   });
 
+  function updateCommentaryCounter() {
+    const n = $('aqScript').value.length;
+    $('aqCounter').textContent = n + ' / 2000';
+    $('aqCounter').classList.toggle('warn', n >= 1600);
+  }
+  $('aqScript').addEventListener('input', updateCommentaryCounter);
+
+  const disarm = (b) => {
+    if (!b || b.dataset.armed !== 'true') return;
+    clearTimeout(Number(b.dataset.armTimer));
+    b.textContent = b.dataset.originalLabel;
+    delete b.dataset.armed; delete b.dataset.armTimer; delete b.dataset.originalLabel;
+    b.classList.remove('armed');
+  };
+
   document.body.addEventListener('click', async (e) => {
     const b = e.target.closest('button');
     if (!b) return;
     const d = b.dataset;
+    if (d.callfilter) { callsFilter = d.callfilter; renderCalls(); return; }
+    if (d.twoStep && d.armed !== 'true') {
+      d.originalLabel = b.textContent; d.armed = 'true';
+      b.textContent = d.twoStep; b.classList.add('armed');
+      d.armTimer = String(setTimeout(() => disarm(b), 3000));
+      return;
+    }
+    if (d.twoStep) disarm(b);
     if (d.prev) { openPreview(d.prev, d.title); return; }
     if (d.aqtrack) { void enqueueTrack(d.aqtrack, d.aqtitle); return; }
     if (d.assetact) { void changeAssetLifecycle(d.assetact, d.assetid, d.assettitle); return; }
     if (d.hlact) { void reviewHotline(d.hlact, d.hlid, d.hlver); return; }
-    if (b.id === 'aqRefreshBtn') { void autoTick(); return; }
     if (b.id === 'aqCommentBtn') { void addCommentary(); return; }
     if (b.id === 'libUploadBtn') { void uploadAsset(); return; }
     if (b.id === 'libMoreBtn') { void loadLibrary(false); return; }
@@ -933,12 +1101,12 @@
     }
     else if (b.id === 'skipBtn') await api('/api/rerun/skip', { method: 'POST' });
     else if (d.mp4) { requestMp4(d.mp4); return; }
-    else if (d.cue) { await api('/api/rerun/queue', { method: 'POST', body: JSON.stringify({ file: d.cue }) }); toast('cued ' + fmtSession(d.cue)); }
+    else if (d.cue) { const r = await api('/api/rerun/queue', { method: 'POST', body: JSON.stringify({ file: d.cue }) }); toast('cued ' + fmtSession(d.cue) + (r.queued ? ' \u2014 position ' + r.queued : '')); }
     else if (d.unqueue !== undefined) await api('/api/rerun/unqueue', { method: 'POST', body: JSON.stringify({ index: Number(d.unqueue) }) });
     else if (d.vmair) { const r = await api('/api/voicemail/play', { method: 'POST', body: JSON.stringify({ file: d.vmair }) }); toast('queued on air (#' + r.queued + ')'); }
     else if (d.vmarch) { await api('/api/voicemails/' + encodeURIComponent(d.vmarch) + '/archive', { method: 'POST', body: JSON.stringify({ archived: d.flag === 'true' }) }); toast(d.flag === 'true' ? 'archived' : 'restored'); }
-    else if (d.vmdel) { if (!confirm('Delete this voicemail forever?')) return; await api('/api/voicemails/' + encodeURIComponent(d.vmdel), { method: 'DELETE' }); toast('deleted'); }
-    else if (d.del) { if (!confirm('Delete ' + d.del + '?')) return; await api('/api/recordings/' + encodeURIComponent(d.del), { method: 'DELETE' }); toast('deleted'); }
+    else if (d.vmdel) { if (!confirm('Delete voicemail from ' + fmtSession(d.vmdel) + ' forever?')) return; await api('/api/voicemails/' + encodeURIComponent(d.vmdel), { method: 'DELETE' }); toast('deleted'); }
+    else if (d.del) { if (!confirm('Delete recording “' + fmtSession(d.del) + '” forever?')) return; await api('/api/recordings/' + encodeURIComponent(d.del), { method: 'DELETE' }); toast('deleted'); }
     else if (d.activate) { await api('/api/music/track', { method: 'POST', body: JSON.stringify({ file: d.activate }) }); toast('bed switched'); }
     else if (d.delmusic) { if (!confirm('Delete ' + d.delmusic + '?')) return; await api('/api/music/' + encodeURIComponent(d.delmusic), { method: 'DELETE' }); toast('deleted'); }
     else if (b.id === 'uploadBtn') {
@@ -952,13 +1120,57 @@
     refresh();
   });
 
-  refresh();
-  setInterval(refresh, 5000);
-  autoTick();
-  setInterval(autoTick, 4000);
-  loadAudience();
-  setInterval(loadAudience, 5 * 60_000);
-  window.addEventListener('resize', loadAudience);
+  document.body.addEventListener('focusout', (e) => {
+    const b = e.target.closest && e.target.closest('button[data-armed="true"]');
+    if (b && e.relatedTarget) setTimeout(() => { if (document.activeElement !== b) disarm(b); }, 0);
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') document.querySelectorAll('button[data-armed="true"]').forEach(disarm);
+  });
+
+  const validTabs = new Set(['onair', 'library', 'calls', 'archive', 'station']);
+  function routeTab() {
+    const tab = location.hash.slice(1);
+    const active = validTabs.has(tab) ? tab : 'onair';
+    document.querySelectorAll('[data-tab]').forEach((a) => a.setAttribute('aria-current', a.dataset.tab === active ? 'page' : 'false'));
+    document.querySelectorAll('[data-view]').forEach((v) => { v.hidden = v.dataset.view !== active; });
+    if (active === 'station' && audienceSamples.length) requestAnimationFrame(() => drawAudience(audienceSamples));
+  }
+  window.addEventListener('hashchange', routeTab);
+  routeTab();
+
+  let stateTimer = null, autoTimer = null, audienceTimer = null, freshnessTimer = null;
+  const clearPolling = () => {
+    clearTimeout(stateTimer); clearTimeout(autoTimer); clearTimeout(audienceTimer); clearInterval(freshnessTimer);
+    stateTimer = autoTimer = audienceTimer = freshnessTimer = null;
+  };
+  const stateLoop = async () => {
+    if (document.hidden) return;
+    await refresh();
+    stateTimer = setTimeout(stateLoop, stateFailures >= 3 ? 15_000 : 5_000);
+  };
+  const automationLoop = async () => {
+    if (document.hidden) return;
+    await autoTick();
+    autoTimer = setTimeout(automationLoop, auto.down ? 15_000 : 4_000);
+  };
+  const audienceLoop = async () => {
+    if (document.hidden) return;
+    await loadAudience();
+    audienceTimer = setTimeout(audienceLoop, 5 * 60_000);
+  };
+  const startPolling = () => {
+    clearPolling();
+    void stateLoop(); void automationLoop(); void audienceLoop();
+    freshnessTimer = setInterval(renderFreshness, 1000);
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { clearPolling(); if (autoAbort) autoAbort.abort(); }
+    else startPolling();
+  });
+  window.addEventListener('resize', () => { if (!document.hidden && audienceSamples.length) drawAudience(audienceSamples); });
+
+  startPolling();
 })();
 </script>
 </body>

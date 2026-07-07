@@ -333,6 +333,13 @@ automation container before allowing rsync. Never copy a live DB/WAL pair.
 - Control room `https://fm.anoma.ly`: archive (play/mp4 download/cue/
   delete), rerun queue + auto toggle + skip, music bed upload/activate
   (hot-swap, no restart). Basic auth; creds in box `.env`.
+- Control room UI layout: a sticky ON AIR rail (sticky top card on mobile) plus
+  hash-routed ON AIR/LIBRARY/CALLS/ARCHIVE/STATION views. CALLS joins the
+  private inbox and redacted AI moderation projection client-side; LIBRARY
+  keeps the legacy fallback bed collapsed; audience, skins, and AI DJ health
+  live under STATION. Polling pauses while hidden and preserves focused form
+  state. Keep every existing route/security boundary when changing this UI;
+  do not add manual refresh controls or browser-visible automation secrets.
 - Control room automation panels (asset library/upload, AI queue, AI DJ,
   hotline AI review): the admin server proxies a FIXED ALLOWLIST of
   automation routes with the internal token held server-side — the browser
