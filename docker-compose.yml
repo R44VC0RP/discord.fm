@@ -1,4 +1,74 @@
 services:
+  # Private durable cue/catalog writer. Opt-in shadow service; it has no host
+  # port and cannot affect audio until later bot playout work enables the flag.
+  automation:
+    build: ./automation
+    restart: unless-stopped
+    profiles: ["automation"]
+    env_file: .env
+    environment:
+      AUTOMATION_BIND: 0.0.0.0
+      AUTOMATION_DB_PATH: /state/station.db
+      AUTOMATION_MUSIC_DIR: /music
+      AUTOMATION_GENERATED_DIR: /generated
+      AUTOMATION_PLAYOUT_ENABLED: ${AUTOMATION_PLAYOUT_ENABLED:-false}
+      AUTOMATION_DJ_ENABLED: ${AUTOMATION_DJ_ENABLED:-false}
+      AUTOMATION_DJ_SHADOW: ${AUTOMATION_DJ_SHADOW:-false}
+      AUTOMATION_DJ_FAKE_PROVIDER_ENABLED: ${AUTOMATION_DJ_FAKE_PROVIDER_ENABLED:-false}
+      AUTOMATION_HOTLINE_ENABLED: ${AUTOMATION_HOTLINE_ENABLED:-false}
+      AUTOMATION_HOTLINE_IMPORT_ENABLED: ${AUTOMATION_HOTLINE_IMPORT_ENABLED:-false}
+      AUTOMATION_GENERATION_ENABLED: ${AUTOMATION_GENERATION_ENABLED:-false}
+      AUTOMATION_AI_ARCHIVE_ENABLED: ${AUTOMATION_AI_ARCHIVE_ENABLED:-false}
+      AUTOMATION_OPENCODE_URL: http://opencode:4096
+      AUTOMATION_FEED_DIR: /feed
+    expose:
+      - "8092"
+    volumes:
+      - ./state:/state
+      - ./generated:/generated
+      - ./music:/music:ro
+      - ./recordings:/recordings:ro
+      - ./voicemails:/voicemails:ro
+      # Rerun migration source + continuously refreshed rollback export.
+      - ./feed:/feed
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8092/readyz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      opencode:
+        condition: service_healthy
+
+  # Pinned private DJ agent server. No repository/state/assets are mounted;
+  # custom tools can only call the authenticated automation HTTP gateway.
+  opencode:
+    build: ./opencode
+    restart: unless-stopped
+    profiles: ["automation"]
+    environment:
+      OPENCODE_CONFIG: /config/opencode.json
+      OPENCODE_CONFIG_DIR: /config
+      OPENCODE_SERVER_USERNAME: ${OPENCODE_SERVER_USERNAME:-opencode}
+      OPENCODE_SERVER_PASSWORD: ${OPENCODE_SERVER_PASSWORD:-}
+      OPENCODE_API_KEY: ${ZEN_API_KEY:-}
+      AUTOMATION_DJ_MODEL: ${AUTOMATION_DJ_MODEL:-}
+      AUTOMATION_INTERNAL_URL: http://automation:8092
+      AUTOMATION_DJ_TOOL_TOKEN: ${AUTOMATION_DJ_TOOL_TOKEN:-}
+    expose:
+      - "4096"
+    read_only: true
+    tmpfs:
+      - /scratch:rw,noexec,nosuid,size=256m,uid=1000,gid=1000
+      - /tmp:rw,noexec,nosuid,size=64m,uid=1000,gid=1000
+    volumes:
+      - ./opencode/config:/config:ro
+    healthcheck:
+      test: ["CMD", "node", "-e", "const a='Basic '+Buffer.from((process.env.OPENCODE_SERVER_USERNAME||'opencode')+':'+process.env.OPENCODE_SERVER_PASSWORD).toString('base64');fetch('http://127.0.0.1:4096/global/health',{headers:{authorization:a}}).then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
   bot:
     build: ./bot
     restart: unless-stopped
@@ -6,10 +76,14 @@ services:
     environment:
       # Inside the compose network the bot always talks to the icecast service.
       ICECAST_HOST: icecast
+      AUTOMATION_INTERNAL_URL: ${AUTOMATION_INTERNAL_URL:-http://automation:8092}
+      AUTOMATION_PLAYOUT_ENABLED: ${AUTOMATION_PLAYOUT_ENABLED:-false}
+      AUTOMATION_CROSSFADE_MS: ${AUTOMATION_CROSSFADE_MS:-3000}
     volumes:
       - ./music:/music:ro
       - ./recordings:/recordings:ro
       - ./voicemails:/voicemails:ro
+      - ./generated:/generated:ro
       # Activity feed files, served by icecast at /feed/.
       - ./feed:/feed
       # Station web root: daily skin rotation writes current.html here.
@@ -57,8 +131,13 @@ services:
     env_file: .env
     environment:
       BOT_API: http://bot:8090
+      # Automation proxy target. The admin server injects the internal token
+      # server-side and stays fully functional when the profile is not running.
+      AUTOMATION_API: http://automation:8092
     volumes:
       - ./recordings:/recordings
+      # Read-write: streamed uploads stage + rename under music/originals
+      # (automation reads the same tree read-only and owns the catalog).
       - ./music:/music
       - ./voicemails:/voicemails
       # Clip art + font for archive mp4 renders (read-only).
@@ -84,7 +163,7 @@ services:
     build: ./recorder
     restart: unless-stopped
     environment:
-      RECORDING_STOP_DELAY_S: ${RECORDING_STOP_DELAY_S:-120}
+      RECORDING_STOP_DELAY_S: ${RECORDING_STOP_DELAY_S:-0}
     volumes:
       - ./feed:/feed:ro
       - ./recordings:/recordings
@@ -136,5 +215,3 @@ services:
       RESTART_TZ: ${X_RESTART_TZ:-America/New_York}
     depends_on:
       - mediamtx
-
-

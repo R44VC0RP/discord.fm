@@ -121,6 +121,15 @@ export const config = {
     zenModel: optional('ZEN_MODEL', 'claude-haiku-4-5'),
     zenUrl: optional('ZEN_URL', 'https://opencode.ai/zen/v1/messages'),
   },
+  automation: {
+    /** Explicit cutover flag. False leaves every legacy audio path unchanged. */
+    playoutEnabled: optional('AUTOMATION_PLAYOUT_ENABLED', 'false') === 'true',
+    internalUrl: optional('AUTOMATION_INTERNAL_URL', 'http://automation:8092'),
+    internalToken: optional('AUTOMATION_INTERNAL_TOKEN', ''),
+    /** Fixed equal-power music transition; server also constrains this policy. */
+    crossfadeMs: optionalNumber('AUTOMATION_CROSSFADE_MS', 3000),
+    generatedDir: optional('AUTOMATION_GENERATED_DIR', '/generated'),
+  },
   feed: {
     /** Directory shared with icecast's webroot. "off" disables. */
     dir: offable(optional('FEED_DIR', '/feed')),

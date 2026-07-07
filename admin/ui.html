@@ -47,11 +47,32 @@
     border-radius: 6px; padding: .32rem .75rem; margin-right: 4px;
   }
   button:hover { background: var(--teal); border-color: var(--teal-deep); }
+  button:disabled { opacity: .45; cursor: not-allowed; background: transparent; border-color: var(--brown-dim); }
   button.danger:hover { background: #c96a4a; border-color: #a04c30; }
   button.primary { background: var(--ink); color: var(--cream); border-color: var(--ink); }
   button.primary:hover { background: var(--teal-deep); }
   .muted { color: var(--brown-dim); font-size: .78rem; }
   .active { color: var(--teal-deep); font-weight: 700; }
+  :focus-visible { outline: 2px solid var(--teal-deep); outline-offset: 2px; border-radius: 4px; }
+  input[type="text"], input[type="search"], textarea {
+    font: inherit; font-size: .8rem; color: var(--ink);
+    background: rgba(255,255,255,.55); border: 1px solid var(--brown-dim); border-radius: 6px;
+    padding: .35rem .55rem; min-width: 0;
+  }
+  textarea { width: 100%; resize: vertical; }
+  .scroll { overflow-x: auto; }
+  .chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .chip-row code {
+    font-size: .72rem; background: rgba(138,116,88,.16); border: 1px solid rgba(138,116,88,.35);
+    border-radius: 6px; padding: .15rem .45rem;
+  }
+  .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: .82rem; }
+  .kv dt { color: var(--brown-dim); font-size: .7rem; font-weight: 600; letter-spacing: .08em; align-self: center; }
+  .kv dd { margin: 0; }
+  .warnbox {
+    font-size: .76rem; color: var(--ink-soft); background: rgba(201,106,74,.12);
+    border: 1px solid rgba(160,76,48,.35); border-radius: 8px; padding: .5rem .7rem; margin-top: 10px;
+  }
 
   /* bottom dock player (shared preview for recordings/voicemails/music) */
   #dock {
@@ -89,21 +110,35 @@
 
   <section>
     <h2>AUDIENCE &mdash; LAST 7 DAYS</h2>
-    <canvas id="audChart" style="width:100%;height:190px;display:block"></canvas>
+    <canvas id="audChart" role="img" aria-label="Hourly listener chart for the last 7 days: total, web, and YouTube listeners with live-show markers. A text summary follows." aria-describedby="audStats" style="width:100%;height:190px;display:block"></canvas>
     <div class="muted" id="audStats" style="margin-top:8px"></div>
   </section>
 
   <section>
     <h2>HOTLINE &mdash; (361) 266-6259</h2>
     <div class="muted" id="vmQueueInfo" style="margin-bottom:10px"></div>
-    <table id="vmTable">
-      <thead><tr><th>RECEIVED</th><th>FROM</th><th>LENGTH</th><th>SIZE</th><th></th></tr></thead>
-      <tbody></tbody>
-    </table>
+    <div class="scroll">
+      <table id="vmTable">
+        <thead><tr><th>RECEIVED</th><th>FROM</th><th>LENGTH</th><th>SIZE</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
     <details style="margin-top:12px">
       <summary class="muted" style="cursor:pointer">archived messages</summary>
-      <table id="vmArchTable" style="margin-top:8px"><tbody></tbody></table>
+      <div class="scroll"><table id="vmArchTable" style="margin-top:8px"><tbody></tbody></table></div>
     </details>
+  </section>
+
+  <section>
+    <h2>HOTLINE &mdash; AI QUEUE</h2>
+    <div class="muted" id="hlaiInfo" role="status" style="margin-bottom:10px">connecting to automation&hellip;</div>
+    <div class="scroll">
+      <table id="hlaiTable">
+        <thead><tr><th>RECEIVED</th><th>STATUS</th><th>SCREEN</th><th>LENGTH</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="muted" style="margin-top:8px">Transcripts here are the PII-redacted projection the AI DJ sees; raw audio and caller numbers stay in the private HOTLINE inbox above. AIRED calls are terminal.</div>
   </section>
 
   <section>
@@ -113,39 +148,110 @@
       <button id="skipBtn">SKIP CURRENT</button>
       <span class="muted" id="pausedInfo"></span>
     </div>
-    <table id="queueTable"><tbody></tbody></table>
+    <div class="scroll"><table id="queueTable"><tbody></tbody></table></div>
   </section>
 
   <section>
     <h2>ARCHIVE</h2>
-    <table id="recTable">
-      <thead><tr><th>SESSION</th><th>WHO</th><th>LENGTH</th><th>SIZE</th><th></th></tr></thead>
-      <tbody></tbody>
-    </table>
+    <div class="scroll">
+      <table id="recTable">
+        <thead><tr><th>SESSION</th><th>WHO</th><th>LENGTH</th><th>SIZE</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
   </section>
 
   <section>
     <h2>MUSIC BED</h2>
-    <table id="musicTable"><tbody></tbody></table>
+    <div class="scroll"><table id="musicTable"><tbody></tbody></table></div>
     <div class="row-flex" style="margin-top:12px">
       <input type="file" id="uploadFile" accept=".mp3,audio/mpeg">
       <button class="primary" id="uploadBtn">UPLOAD TRACK</button>
       <span class="muted">mp3 only; becomes selectable immediately</span>
     </div>
   </section>
+
+  <section>
+    <h2>ASSET LIBRARY</h2>
+    <div class="muted" id="libInfo" role="status" style="margin-bottom:10px">connecting to automation&hellip;</div>
+    <form class="row-flex" id="libSearchForm" style="margin-bottom:10px">
+      <input type="search" id="libSearch" placeholder="search title / artist / tag" aria-label="search the asset library" style="flex:1;max-width:320px">
+      <button type="submit" id="libSearchBtn">&#128269; SEARCH</button>
+      <button type="button" id="libMoreBtn" hidden>&#11015;&#65039; LOAD MORE</button>
+    </form>
+    <div class="scroll">
+      <table id="libTable">
+        <thead><tr><th>TITLE</th><th>ARTIST</th><th>TAGS</th><th>LENGTH</th><th>STATUS</th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="row-flex" style="margin-top:14px">
+      <input type="file" id="libFile" accept=".mp3,audio/mpeg" aria-label="mp3 file to upload to the asset library">
+      <input type="text" id="libTitle" placeholder="title (optional)" aria-label="track title">
+      <input type="text" id="libArtist" placeholder="artist (optional)" aria-label="artist">
+      <input type="text" id="libTags" placeholder="tags, comma separated" aria-label="tags, comma separated">
+      <button class="primary" id="libUploadBtn">&#11014;&#65039; UPLOAD TO LIBRARY</button>
+    </div>
+    <div class="warnbox">mp3 only, 60 MB cap. Every upload becomes playable in AI programming immediately &mdash; you are responsible for broadcast rights to anything you upload here.</div>
+  </section>
+
+  <section>
+    <h2>AI QUEUE</h2>
+    <div class="muted" id="aqNow" role="status" style="margin-bottom:6px">connecting to automation&hellip;</div>
+    <div class="muted" id="aqInfo" style="margin-bottom:10px"></div>
+    <div class="row-flex" style="margin-bottom:10px">
+      <button id="aqRefreshBtn">&#128260; REFRESH</button>
+      <span class="muted" id="aqFlags"></span>
+    </div>
+    <div class="scroll">
+      <table id="aqTable">
+        <thead><tr><th>#</th><th>TYPE</th><th>TITLE</th><th>LENGTH</th><th>STATE</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <details style="margin-top:10px">
+      <summary class="muted" style="cursor:pointer">recent queue events (incl. failures)</summary>
+      <table id="aqEvents" style="margin-top:8px"><tbody></tbody></table>
+    </details>
+    <div style="margin-top:14px">
+      <label class="muted" for="aqScript" style="display:block;margin-bottom:4px">DJ commentary script (rendered to speech ahead of air; airs once READY)</label>
+      <textarea id="aqScript" rows="2" maxlength="2000"></textarea>
+      <div class="row-flex" style="margin-top:8px">
+        <button id="aqCommentBtn">&#127908; ADD COMMENTARY</button>
+        <span class="muted">&le;180 words &middot; screened for PII/unsafe content before rendering</span>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>AI DJ</h2>
+    <div class="muted" id="djInfo" role="status" style="margin-bottom:10px">connecting to automation&hellip;</div>
+    <dl class="kv" id="djKv"></dl>
+    <div class="chip-row" id="djTools" aria-label="the seven DJ tools (read-only)"></div>
+    <div class="muted" style="margin-top:10px">DJ mode (OFF / SHADOW / LIVE) and all automation flags are environment feature flags on the production box &mdash; changing them requires a deployment/.env change, not a browser control.</div>
+  </section>
+
+  <section>
+    <h2>WEB PLAYER SKIN</h2>
+    <div class="row-flex" style="margin-bottom:10px">
+      <button id="skinAutoBtn">AUTO DAILY</button>
+      <span class="muted" id="skinInfo"></span>
+    </div>
+    <div class="scroll"><table id="skinTable"><tbody></tbody></table></div>
+  </section>
 </main>
 
 <div id="dock">
-  <button id="dockBtn" title="play/pause">&#9654;&#65039;</button>
+  <button id="dockBtn" title="play/pause" aria-label="play">&#9654;&#65039;</button>
   <span class="title" id="dockTitle"></span>
-  <input type="range" id="dockSeek" min="0" max="1000" value="0">
+  <input type="range" id="dockSeek" min="0" max="1000" value="0" aria-label="seek preview position">
   <span class="time" id="dockTime">0:00 / 0:00</span>
-  <button id="dockClose" title="close">&#10060;</button>
+  <button id="dockClose" title="close" aria-label="close preview">&#10060;</button>
 </div>
 
-<div id="toast"></div>
+<div id="toast" role="status" aria-live="polite"></div>
 
-<script>
+<script nonce="__CSP_NONCE__">
 (() => {
   const $ = (id) => document.getElementById(id);
   let state = null;
@@ -163,9 +269,12 @@
   const fmtT = (s) => { s = Math.floor(s || 0); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
   const updatePreviewButtons = () => {
     document.querySelectorAll('[data-prev]').forEach((b) => {
-      b.textContent = (b.dataset.prev === previewKey && !pa.paused) ? '\u23F8\uFE0F' : '\u25B6\uFE0F';
+      const playing = b.dataset.prev === previewKey && !pa.paused;
+      b.textContent = playing ? '\u23F8\uFE0F' : '\u25B6\uFE0F';
+      b.setAttribute('aria-label', playing ? 'pause preview' : 'preview');
     });
     $('dockBtn').textContent = pa.paused ? '\u25B6\uFE0F' : '\u23F8\uFE0F';
+    $('dockBtn').setAttribute('aria-label', pa.paused ? 'play' : 'pause');
   };
   const openPreview = (url, title) => {
     if (previewKey === url) { pa.paused ? pa.play() : pa.pause(); return; }
@@ -194,7 +303,7 @@
   $('dockBtn').addEventListener('click', () => { if (previewKey) pa.paused ? pa.play() : pa.pause(); });
   $('dockClose').addEventListener('click', closePreview);
   const prevBtn = (url, title) =>
-    '<button data-prev="' + esc(url) + '" data-title="' + esc(title) + '" title="preview">\u25B6\uFE0F</button>';
+    '<button data-prev="' + escAttr(url) + '" data-title="' + escAttr(title) + '" title="preview" aria-label="preview">\u25B6\uFE0F</button>';
   const api = async (path, options) => {
     const res = await fetch(path, options);
     const body = await res.json().catch(() => ({}));
@@ -234,6 +343,7 @@
   const fmtDur = (s) => !s && s !== 0 ? '?' : Math.floor(s / 60) + 'm' + String(s % 60).padStart(2, '0') + 's';
   const fmtSize = (b) => (b / 1048576).toFixed(1) + ' MB';
   const esc = (t) => { const d = document.createElement('span'); d.textContent = t; return d.innerHTML; };
+  const escAttr = (t) => String(t).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   // "session-2026-07-02T18-54-33.mp3" -> "Jul 2 · 6:54 PM" (viewer's timezone)
   const fmtSession = (name) => {
     const m = String(name).match(/^(?:session|vm)-(\d{4})-(\d{2})-(\d{2})T(\d{2})-(\d{2})-(\d{2})/);
@@ -250,6 +360,11 @@
     const bot = state.bot || {};
     const snap = bot.snapshot || {};
     const rerun = bot.rerun || { queue: [], auto: false };
+    const skin = bot.skin || {
+      mode: 'daily', active: null, daily: null, available: [],
+      control: { available: false, message: 'Skin manager unavailable.' },
+    };
+    const skinControl = skin.control || { available: true, message: null };
 
     // now
     let line;
@@ -289,16 +404,16 @@
       return digits.length >= 4 ? '\u2022\u2022\u2022-' + digits.slice(-4) : (f || 'unknown');
     };
     const vmRow = (v, archived) =>
-      '<tr><td title="' + esc(v.file) + '">' + esc(fmtSession(v.file)) + '</td>'
+      '<tr><td title="' + escAttr(v.file) + '">' + esc(fmtSession(v.file)) + '</td>'
       + '<td class="muted">' + esc(maskFrom(v.meta && v.meta.from)) + '</td>'
       + '<td>' + (v.meta && v.meta.durationSeconds ? fmtDur(v.meta.durationSeconds) : '?') + '</td>'
       + '<td>' + fmtSize(v.bytes) + '</td>'
       + '<td style="text-align:right;white-space:nowrap">'
       + prevBtn('/api/voicemails/' + encodeURIComponent(v.file) + '/audio', 'voicemail \u00b7 ' + fmtSession(v.file))
-      + '<button data-vmair="' + esc(v.file) + '" title="queue on air">\u{1F4E1} AIR</button>'
+      + '<button data-vmair="' + escAttr(v.file) + '" title="queue on air">\u{1F4E1} AIR</button>'
       + (archived
-          ? '<button data-vmarch="' + esc(v.file) + '" data-flag="false" title="restore">\u21A9\uFE0F</button><button class="danger" data-vmdel="' + esc(v.file) + '" title="delete forever">\u{1F5D1}\uFE0F</button>'
-          : '<button data-vmarch="' + esc(v.file) + '" data-flag="true" title="archive">\u{1F5C4}\uFE0F</button>')
+          ? '<button data-vmarch="' + escAttr(v.file) + '" data-flag="false" title="restore" aria-label="restore">\u21A9\uFE0F</button><button class="danger" data-vmdel="' + escAttr(v.file) + '" title="delete forever" aria-label="delete forever">\u{1F5D1}\uFE0F</button>'
+          : '<button data-vmarch="' + escAttr(v.file) + '" data-flag="true" title="archive" aria-label="archive">\u{1F5C4}\uFE0F</button>')
       + '</td></tr>'
       + '<tr><td colspan="5" style="border-top:none;padding-top:0;font-size:.78rem;color:var(--brown-dim);font-style:italic">'
       + (v.meta && v.meta.transcript ? '\u{1F5D2}\uFE0F \u201C' + esc(v.meta.transcript) + '\u201D'
@@ -316,13 +431,13 @@
     $('recTable').querySelector('tbody').innerHTML = (state.recordings || []).map((r) => {
       const who = r.meta && r.meta.members ? r.meta.members.join(', ') : (r.meta ? '' : 'recording\u2026');
       const len = r.meta ? fmtDur(r.meta.durationSeconds) : '';
-      return '<tr><td title="' + esc(r.file) + '">' + esc(fmtSession(r.file)) + '</td><td class="muted">' + esc(who) + '</td><td>' + len + '</td><td>' + fmtSize(r.bytes) + '</td>'
+      return '<tr><td title="' + escAttr(r.file) + '">' + esc(fmtSession(r.file)) + '</td><td class="muted">' + esc(who) + '</td><td>' + len + '</td><td>' + fmtSize(r.bytes) + '</td>'
         + '<td style="text-align:right;white-space:nowrap">'
         + prevBtn('/api/recordings/' + encodeURIComponent(r.file) + '/audio', 'session \u00b7 ' + fmtSession(r.file))
-        + '<button data-mp4="' + esc(r.file) + '" title="' + (r.mp4 ? 'download mp4' : 'render + download mp4') + '">'
+        + '<button data-mp4="' + escAttr(r.file) + '" title="' + (r.mp4 ? 'download mp4' : 'render + download mp4') + '">'
         + (mp4Poll.has(r.file) ? '\u23F3 MP4' : (r.mp4 ? '\u2B07\uFE0F MP4' : '\u{1F3AC} MP4')) + '</button>'
-        + '<button data-cue="' + esc(r.file) + '" title="cue rerun">\u2795 CUE</button>'
-        + '<button class="danger" data-del="' + esc(r.file) + '" title="delete">\u{1F5D1}\uFE0F</button></td></tr>';
+        + '<button data-cue="' + escAttr(r.file) + '" title="cue rerun">\u2795 CUE</button>'
+        + '<button class="danger" data-del="' + escAttr(r.file) + '" title="delete" aria-label="delete recording">\u{1F5D1}\uFE0F</button></td></tr>';
     }).join('') || '<tr><td class="muted">no recordings yet</td></tr>';
 
     // music
@@ -331,8 +446,27 @@
       '<tr><td' + (m.file === active ? ' class="active"' : '') + '>' + esc(m.file) + (m.file === active ? ' \u2190 active' : '') + '</td>'
       + '<td>' + fmtSize(m.bytes) + '</td><td style="text-align:right;white-space:nowrap">'
       + prevBtn('/api/music/' + encodeURIComponent(m.file) + '/audio', 'bed \u00b7 ' + m.file)
-      + (m.file === active ? '' : '<button data-activate="' + esc(m.file) + '" title="make active bed">\u2705 ACTIVATE</button><button class="danger" data-delmusic="' + esc(m.file) + '" title="delete">\u{1F5D1}\uFE0F</button>')
+      + (m.file === active ? '' : '<button data-activate="' + escAttr(m.file) + '" title="make active bed">\u2705 ACTIVATE</button><button class="danger" data-delmusic="' + escAttr(m.file) + '" title="delete" aria-label="delete track">\u{1F5D1}\uFE0F</button>')
       + '</td></tr>').join('') || '<tr><td class="muted">no tracks</td></tr>';
+
+    // web player skins
+    $('skinAutoBtn').textContent = skin.mode === 'daily' ? '\u2705 AUTO DAILY' : '\u{1F504} AUTO DAILY';
+    $('skinAutoBtn').disabled = !skinControl.available;
+    $('skinAutoBtn').title = skinControl.message || 'restore deterministic daily rotation';
+    $('skinInfo').textContent = !skinControl.available ? skinControl.message : skin.mode === 'manual'
+      ? 'manual selection is pinned across restarts'
+      : 'today: ' + (skin.daily || 'no skin available');
+    $('skinTable').querySelector('tbody').innerHTML = (skin.available || []).map((name) => {
+      const isActive = name === skin.active;
+      const isDaily = name === skin.daily;
+      return '<tr><td' + (isActive ? ' class="active"' : '') + '>' + esc(name)
+        + (isActive ? ' \u2190 active' : '') + (isDaily ? ' <span class="muted">(today)</span>' : '') + '</td>'
+        + '<td style="text-align:right;white-space:nowrap">'
+        + '<button data-skinpreview="' + escAttr(name) + '" title="open without changing the active skin">\u{1F441}\uFE0F PREVIEW</button>'
+        + (isActive && skin.mode === 'manual' ? '' : '<button data-skinactivate="' + escAttr(name) + '" title="'
+          + escAttr(skinControl.message || 'pin this skin') + '"' + (skinControl.available ? '' : ' disabled') + '>\u2705 ACTIVATE</button>')
+        + '</td></tr>';
+    }).join('') || '<tr><td class="muted">no skins found</td></tr>';
     updatePreviewButtons();
   }
 
@@ -416,11 +550,326 @@
       + 'peak ' + peak + ' \u00b7 avg ' + avg + ' \u00b7 ' + samples.length + ' hourly samples';
   }
 
+  // --- automation panels (asset library / AI queue / AI DJ / hotline AI) ---
+  // All calls go through the admin server's fixed-allowlist proxy; the
+  // browser never holds an automation credential.
+  const auto = { queue: null, dj: null, hotline: null, events: null, lib: { items: [], cursor: null, search: '' }, down: null };
+  const autoRendered = {};
+  const renderIfChanged = (key, data, fn) => {
+    const s = JSON.stringify(data);
+    if (autoRendered[key] === s) return;
+    autoRendered[key] = s;
+    fn();
+  };
+  const autoErrMsg = (body, status) =>
+    (body && body.error && (body.error.message || (typeof body.error === 'string' ? body.error : null))) || ('error ' + status);
+  const autoApi = async (path, options) => {
+    const res = await fetch(path, options);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = new Error(autoErrMsg(body, res.status));
+      err.status = res.status;
+      err.code = body && body.error && body.error.code;
+      toast(err.message);
+      throw err;
+    }
+    return body;
+  };
+  const newIdem = () => (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2));
+  const fmtMs = (ms) => fmtDur(Math.round((ms || 0) / 1000));
+
+  const AUTO_DOWN_MSG = 'automation offline \u2014 service not running or not configured; this panel is disabled';
+  function markAutomationDown(message) {
+    auto.down = message || AUTO_DOWN_MSG;
+    for (const id of ['hlaiInfo', 'libInfo', 'aqNow', 'djInfo']) $(id).textContent = '\u26A0\uFE0F ' + auto.down;
+    for (const id of ['libUploadBtn', 'aqCommentBtn', 'aqRefreshBtn', 'libSearchBtn', 'libMoreBtn']) $(id).disabled = true;
+  }
+  function markAutomationUp() {
+    if (auto.down === null) return;
+    auto.down = null;
+    for (const id of ['libUploadBtn', 'aqCommentBtn', 'aqRefreshBtn', 'libSearchBtn', 'libMoreBtn']) $(id).disabled = false;
+  }
+
+  const STATE_BADGE = {
+    READY: '\u2705 READY', GENERATING: '\u23F3 GENERATING', VALIDATING: '\u23F3 VALIDATING', DRAFT: '\u23F3 DRAFT',
+    CLAIMED: '\u25B6\uFE0F CLAIMED', PLAYING: '\u25B6\uFE0F PLAYING', FAILED: '\u26A0\uFE0F FAILED',
+    CANCELED: '\u274C CANCELED', COMPLETED: '\u2714\uFE0F COMPLETED', INTERRUPTED: '\u26A0\uFE0F INTERRUPTED',
+  };
+  const badge = (s) => STATE_BADGE[s] || esc(s || '?');
+
+  function renderQueuePanel() {
+    const q = auto.queue;
+    if (!q) return;
+    renderIfChanged('aq', q, () => {
+      const cues = q.cues || [];
+      const current = cues.find((c) => c.state === 'PLAYING' || c.state === 'CLAIMED');
+      const label = (c) => (c.public_metadata && c.public_metadata.title) || c.type;
+      $('aqNow').textContent = current
+        ? 'NOW: ' + badge(current.state).replace(/^[^ ]+ /, '') + ' \u2014 ' + label(current)
+          + ' @ ' + fmtMs(current.last_offset_ms) + ' / ' + fmtMs(current.planned_duration_ms)
+        : 'no cue is claimed or playing';
+      const readyMin = Math.round((q.ready_duration_ms || 0) / 60000);
+      $('aqInfo').textContent = 'revision ' + q.queue_revision + ' \u00b7 ' + q.ready_count + ' READY ('
+        + readyMin + 'm) \u00b7 ' + q.generating_count + ' generating \u00b7 '
+        + cues.length + ' items \u00b7 watermarks ' + q.watermarks.low_count + '/' + q.watermarks.high_count
+        + ' cues, ' + Math.round(q.watermarks.low_duration_ms / 60000) + '/' + Math.round(q.watermarks.target_duration_ms / 60000) + 'm';
+      const f = q.flags || {};
+      $('aqFlags').textContent = f.playout_enabled
+        ? 'playout flag ON \u2014 the bot claims these cues when nobody is live'
+        : 'playout flag OFF \u2014 queue is durable but nothing airs from it yet (env change required)';
+      const upcoming = cues.filter((c) => c !== current);
+      $('aqTable').querySelector('tbody').innerHTML = upcoming.length
+        ? upcoming.map((c, i) =>
+            '<tr><td>' + (i + 1) + '</td><td>' + esc(c.type) + (c.role ? ' <span class="muted">(' + esc(c.role) + ')</span>' : '') + '</td>'
+            + '<td>' + esc(label(c)) + (c.public_metadata && c.public_metadata.artist ? ' <span class="muted">\u2014 ' + esc(c.public_metadata.artist) + '</span>' : '') + '</td>'
+            + '<td>' + fmtMs(c.planned_duration_ms) + '</td><td>' + badge(c.state) + '</td></tr>').join('')
+        : '<tr><td class="muted" colspan="5">queue empty</td></tr>';
+    });
+    const ev = (auto.events && auto.events.items) || [];
+    renderIfChanged('aqev', ev, () => {
+      $('aqEvents').querySelector('tbody').innerHTML = ev.length
+        ? ev.slice(0, 12).map((e2) =>
+            '<tr><td class="muted">' + esc((e2.at || '').replace('T', ' ').slice(0, 19)) + '</td>'
+            + '<td>' + esc(e2.event || '') + (e2.reason_code ? ' <span class="muted">(' + esc(e2.reason_code) + ')</span>' : '') + '</td>'
+            + '<td>' + esc(e2.title || e2.type || '') + '</td></tr>').join('')
+        : '<tr><td class="muted">no events yet</td></tr>';
+    });
+  }
+
+  function renderDjPanel() {
+    const d = auto.dj;
+    if (!d) return;
+    renderIfChanged('dj', d, () => {
+      const oc = d.opencode || {};
+      $('djInfo').textContent = 'MODE: ' + d.mode;
+      const run = d.last_run;
+      const daily = d.daily || {};
+      const lease = d.lease || {};
+      const rows = [
+        ['OPENCODE', oc.healthy ? '\u2705 healthy' + (oc.version ? ' \u00b7 v' + oc.version : '')
+          : '\u26A0\uFE0F ' + (oc.status === 'NOT_CONFIGURED' ? 'not configured' : 'unavailable')],
+        ['LAST RUN', run ? run.state : 'no runs yet'],
+        ['LEASE', (lease.held ? 'held until ' + (lease.expires_at || '?') : 'free')
+          + (lease.backoff_until ? ' \u00b7 backoff until ' + lease.backoff_until.replace('T', ' ').slice(0, 19) : '')
+          + (lease.cooldown_until ? ' \u00b7 cooldown until ' + lease.cooldown_until.replace('T', ' ').slice(0, 19) : '')
+          + ' \u00b7 ' + (lease.failure_count || 0) + ' consecutive failures'
+          + (lease.last_result ? ' \u00b7 last: ' + lease.last_result : '')],
+        ['TODAY', (daily.tool_calls ?? '?') + '/' + (daily.tool_call_limit ?? '?') + ' tool calls \u00b7 '
+          + (daily.model_tokens ?? '?') + '/' + (daily.model_token_limit ?? '?') + ' tokens \u00b7 '
+          + (daily.tts_characters ?? '?') + '/' + (daily.tts_character_limit ?? '?') + ' TTS chars'],
+        ['WATERMARKS', d.watermarks.low_count + ' low / ' + d.watermarks.high_count + ' high cues \u00b7 '
+          + Math.round(d.watermarks.low_duration_ms / 60000) + 'm floor / ' + Math.round(d.watermarks.target_duration_ms / 60000) + 'm target'],
+      ];
+      $('djKv').innerHTML = rows.map(([k, v]) => '<dt>' + esc(k) + '</dt><dd>' + esc(v) + '</dd>').join('');
+      $('djTools').innerHTML = (d.tools || []).map((t) => '<code>' + esc(t) + '</code>').join('');
+    });
+  }
+
+  function renderLibraryPanel() {
+    renderIfChanged('lib', { items: auto.lib.items, cursor: auto.lib.cursor }, () => {
+      const items = auto.lib.items;
+      $('libInfo').textContent = items.length
+        ? items.length + ' assets loaded' + (auto.lib.cursor ? ' (more available)' : '') + (auto.lib.search ? ' \u00b7 search: \u201C' + auto.lib.search + '\u201D' : '')
+        : 'library empty \u2014 upload a track or run the existing-music import';
+      $('libMoreBtn').hidden = !auto.lib.cursor;
+      const ASSET_BADGE = { READY: '\u2705 READY', PROCESSING: '\u23F3 PROCESSING', QUARANTINED: '\u26A0\uFE0F QUARANTINED', FAILED: '\u26A0\uFE0F FAILED', RETIRED: '\u274C RETIRED' };
+      $('libTable').querySelector('tbody').innerHTML = items.length
+        ? items.map((a) =>
+            '<tr><td>' + esc(a.title || '?') + '</td><td class="muted">' + esc(a.artist || '\u2014') + '</td>'
+            + '<td class="muted">' + esc((a.tags || []).join(', ') || '\u2014') + '</td>'
+            + '<td>' + fmtMs(a.duration_ms) + '</td><td>' + (ASSET_BADGE[a.status] || esc(a.status)) + '</td>'
+            + '<td style="text-align:right;white-space:nowrap">'
+            + (a.status === 'READY' && a.kind === 'music'
+                ? prevBtn('/api/automation/assets/' + encodeURIComponent(a.asset_id) + '/audio', 'library \u00b7 ' + (a.title || a.asset_id))
+                  + '<button data-aqtrack="' + escAttr(a.asset_id) + '" data-aqtitle="' + escAttr(a.title || '') + '" title="append to the AI queue">\u2795 QUEUE</button>'
+                : '')
+            + '</td></tr>').join('')
+        : '<tr><td class="muted" colspan="6">no assets</td></tr>';
+      updatePreviewButtons();
+    });
+  }
+
+  function renderHotlineAiPanel() {
+    const h = auto.hotline;
+    if (!h) return;
+    renderIfChanged('hlai', h, () => {
+      const items = h.items || [];
+      $('hlaiInfo').textContent = (h.hotlineEnabled
+        ? 'hotline automation flag ON'
+        : 'hotline automation flag OFF \u2014 candidates are tracked but the DJ cannot see or air any of them (env change required)')
+        + ' \u00b7 ' + items.filter((c) => c.dj_visible).length + ' visible to the DJ \u00b7 ' + items.length + ' tracked';
+      const HL_BADGE = { ELIGIBLE: '\u2705 ELIGIBLE', NEEDS_REVIEW: '\u{1F50D} NEEDS REVIEW', REJECTED: '\u274C REJECTED', QUEUED: '\u{1F4E1} QUEUED', AIRED: '\u2714\uFE0F AIRED', ARCHIVED: '\u{1F5C4}\uFE0F ARCHIVED' };
+      const screenText = (c) => c.screen_result === 'PASS' ? 'pass' : c.screen_result === 'BADWORD' ? 'badword match' : c.screen_result === 'PII_UNCERTAIN' ? 'PII uncertain' : 'no transcript';
+      $('hlaiTable').querySelector('tbody').innerHTML = items.length
+        ? items.map((c) => {
+            const actions = [];
+            if (c.status === 'NEEDS_REVIEW' || c.status === 'REJECTED') {
+              actions.push('<button data-hlact="approve" data-hlid="' + escAttr(c.candidate_id) + '" data-hlver="' + escAttr(c.moderation_version) + '" title="make eligible for the AI DJ">\u2705 APPROVE</button>');
+            }
+            if (['ELIGIBLE', 'NEEDS_REVIEW', 'QUEUED'].includes(c.status)) {
+              actions.push('<button class="danger" data-hlact="reject" data-hlid="' + escAttr(c.candidate_id) + '" data-hlver="' + escAttr(c.moderation_version) + '" title="never let the DJ select this call">\u274C REJECT</button>');
+            }
+            if (c.status === 'ARCHIVED' && !c.aired_at) {
+              actions.push('<button data-hlact="restore" data-hlid="' + escAttr(c.candidate_id) + '" data-hlver="' + escAttr(c.moderation_version) + '" title="return this archived call to review">\u21A9\uFE0F RESTORE</button>');
+            }
+            return '<tr><td title="' + escAttr(c.call_id) + '">' + esc(fmtSession(c.call_id + '.mp3')) + '</td>'
+              + '<td>' + (HL_BADGE[c.status] || esc(c.status)) + (c.operator_override ? ' <span class="muted">(operator)</span>' : '') + '</td>'
+              + '<td class="muted">' + esc(screenText(c)) + (c.archive_reason ? ' \u00b7 ' + esc(c.archive_reason) : '') + (c.screen_current ? '' : ' \u00b7 stale policy') + '</td>'
+              + '<td>' + fmtMs(c.duration_ms) + '</td>'
+              + '<td style="text-align:right;white-space:nowrap">' + actions.join('') + '</td></tr>'
+              + '<tr><td colspan="5" style="border-top:none;padding-top:0;font-size:.78rem;color:var(--brown-dim);font-style:italic">\u{1F5D2}\uFE0F '
+              + (c.transcript ? '\u201C' + esc(c.transcript) + '\u201D' : '(no speech detected)') + '</td></tr>';
+          }).join('')
+        : '<tr><td class="muted" colspan="5">no calls imported yet</td></tr>';
+    });
+  }
+
+  async function loadLibrary(reset) {
+    if (auto.down) return;
+    if (reset) { auto.lib.items = []; auto.lib.cursor = null; }
+    const qs = new URLSearchParams({ limit: '50' });
+    if (auto.lib.search) qs.set('search', auto.lib.search);
+    if (auto.lib.cursor) qs.set('cursor', auto.lib.cursor);
+    try {
+      const page = await autoApi('/api/automation/catalog?' + qs);
+      auto.lib.items = auto.lib.items.concat(page.items || []);
+      auto.lib.cursor = page.nextCursor || null;
+      renderLibraryPanel();
+    } catch { /* toast already shown */ }
+  }
+
+  let autoAbort = null;
+  let autoTickCount = 0;
+  async function autoTick() {
+    if (autoAbort) autoAbort.abort();
+    autoAbort = new AbortController();
+    const signal = autoAbort.signal;
+    const slow = autoTickCount % 3 === 0; // dj + hotline + events every third tick
+    autoTickCount += 1;
+    try {
+      const get = async (path2) => {
+        const res = await fetch(path2, { signal });
+        return { status: res.status, body: await res.json().catch(() => ({})) };
+      };
+      const q = await get('/api/automation/queue');
+      if (q.status === 503) { markAutomationDown(autoErrMsg(q.body, q.status)); return; }
+      const firstContact = auto.down !== null || auto.queue === null;
+      markAutomationUp();
+      if (q.status === 200) { auto.queue = q.body; renderQueuePanel(); }
+      if (slow || firstContact) {
+        const [dj, hl, ev] = await Promise.all([get('/api/automation/dj'), get('/api/automation/hotline'), get('/api/automation/history?limit=25')]);
+        if (dj.status === 200) { auto.dj = dj.body; renderDjPanel(); }
+        if (hl.status === 200) { auto.hotline = hl.body; renderHotlineAiPanel(); }
+        if (ev.status === 200) { auto.events = ev.body; renderQueuePanel(); }
+      }
+      if (firstContact) await loadLibrary(true);
+    } catch (err) {
+      if (err && err.name === 'AbortError') return;
+      markAutomationDown(AUTO_DOWN_MSG);
+    }
+  }
+
+  async function enqueueTrack(assetId, title) {
+    if (!auto.queue) { toast('queue not loaded yet'); return; }
+    try {
+      const r = await autoApi('/api/automation/queue/track', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ asset_id: assetId, expected_queue_revision: auto.queue.queue_revision, idempotency_key: newIdem(), source: 'admin' }),
+      });
+      toast('\u2795 queued ' + (title || assetId) + ' (revision ' + r.queue_revision + ')');
+    } catch (err) {
+      if (err.code === 'REVISION_CONFLICT') toast('queue changed underneath you \u2014 refreshed, try again');
+    }
+    await autoTick();
+  }
+
+  async function addCommentary() {
+    const script = $('aqScript').value.trim();
+    if (!script) { toast('write a commentary script first'); $('aqScript').focus(); return; }
+    if (!auto.queue) { toast('queue not loaded yet'); return; }
+    try {
+      await autoApi('/api/automation/queue/commentary', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ script, expected_queue_revision: auto.queue.queue_revision, idempotency_key: newIdem(), source: 'admin' }),
+      });
+      toast('\u{1F399}\uFE0F commentary accepted \u2014 rendering to speech');
+      $('aqScript').value = '';
+    } catch (err) {
+      if (err.code === 'REVISION_CONFLICT') toast('queue changed underneath you \u2014 refreshed, try again');
+    }
+    await autoTick();
+  }
+
+  const HL_CONFIRM = {
+    approve: (c) => 'Approve this call for the AI DJ? It overrides the '
+      + (c.screen_result === 'BADWORD' ? 'badword screen' : c.screen_result === 'PII_UNCERTAIN' ? 'PII screen' : 'deterministic screen')
+      + ' and the DJ may then select and AIR it automatically, with no further review.',
+    reject: (c) => 'Reject this call for AI airing? The DJ will never select it (the audio stays in the private hotline inbox).',
+    restore: (c) => 'Restore this ' + (c.archive_reason === 'PLAYOUT_INTERRUPTED' || c.archive_reason === 'PLAYOUT_CLAIM_EXPIRED' ? 'interrupted' : 'archived')
+      + ' call to AI review? It may become selectable by the DJ again.',
+  };
+  async function reviewHotline(action, candidateId, version) {
+    const candidate = ((auto.hotline && auto.hotline.items) || []).find((c) => c.candidate_id === candidateId) || {};
+    if (HL_CONFIRM[action] && !confirm(HL_CONFIRM[action](candidate))) return;
+    try {
+      const r = await autoApi('/api/automation/hotline/review', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ candidate_id: candidateId, action, expected_moderation_version: Number(version), idempotency_key: newIdem() }),
+      });
+      toast({ approve: 'approved', reject: 'rejected', restore: 'restored' }[action] + ' \u2014 now ' + r.status);
+    } catch (err) {
+      if (err.code === 'MODERATION_VERSION_CONFLICT') toast('call changed underneath you \u2014 refreshed, review again');
+    }
+    autoTickCount = 0; // force the hotline/dj panels to refresh on this tick
+    await autoTick();
+  }
+
+  async function uploadAsset() {
+    const file = $('libFile').files[0];
+    if (!file) { toast('choose an mp3 first'); $('libFile').focus(); return; }
+    if (file.size > 60 * 1024 * 1024) { toast('file exceeds the 60 MB cap'); return; }
+    const qs = new URLSearchParams({
+      title: $('libTitle').value.trim(),
+      artist: $('libArtist').value.trim(),
+      tags: $('libTags').value.trim(),
+      filename: file.name,
+    });
+    $('libUploadBtn').disabled = true;
+    toast('\u23F3 uploading + probing\u2026');
+    try {
+      const r = await autoApi('/api/automation/upload?' + qs, { method: 'PUT', body: file });
+      toast(r.duplicate ? 'already in the library (identical bytes) \u2014 kept the existing asset' : '\u2705 added to library: ' + (r.title || r.asset_id));
+      $('libFile').value = ''; $('libTitle').value = ''; $('libArtist').value = ''; $('libTags').value = '';
+      await loadLibrary(true);
+    } catch { /* toast already shown */ } finally {
+      $('libUploadBtn').disabled = auto.down !== null;
+    }
+  }
+
+  $('libSearchForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    auto.lib.search = $('libSearch').value.trim();
+    void loadLibrary(true);
+  });
+
   document.body.addEventListener('click', async (e) => {
     const b = e.target.closest('button');
     if (!b) return;
     const d = b.dataset;
     if (d.prev) { openPreview(d.prev, d.title); return; }
+    if (d.aqtrack) { void enqueueTrack(d.aqtrack, d.aqtitle); return; }
+    if (d.hlact) { void reviewHotline(d.hlact, d.hlid, d.hlver); return; }
+    if (b.id === 'aqRefreshBtn') { void autoTick(); return; }
+    if (b.id === 'aqCommentBtn') { void addCommentary(); return; }
+    if (b.id === 'libUploadBtn') { void uploadAsset(); return; }
+    if (b.id === 'libMoreBtn') { void loadLibrary(false); return; }
+    if (d.skinpreview) {
+      window.open('https://anomaly.fm/station/skins/' + encodeURIComponent(d.skinpreview), '_blank', 'noopener');
+      return;
+    }
     if (b.id === 'announceBtn') {
       toast('generating time check\u2026');
       let r = await api('/api/announce', { method: 'POST', body: JSON.stringify({ force: false }) });
@@ -430,7 +879,9 @@
       toast(r.fired ? '\u{1F4E2} time check airing' : 'skipped: ' + (r.reason || 'unknown'));
       return;
     }
-    if (b.id === 'autoBtn') await api('/api/rerun/auto', { method: 'POST', body: JSON.stringify({ enabled: !(state.bot.rerun || {}).auto }) });
+    if (b.id === 'skinAutoBtn') { await api('/api/skin', { method: 'POST', body: JSON.stringify({ mode: 'daily' }) }); toast('daily skin rotation restored'); }
+    else if (d.skinactivate) { await api('/api/skin', { method: 'POST', body: JSON.stringify({ mode: 'manual', skin: d.skinactivate }) }); toast('skin activated and pinned'); }
+    else if (b.id === 'autoBtn') await api('/api/rerun/auto', { method: 'POST', body: JSON.stringify({ enabled: !(state.bot.rerun || {}).auto }) });
     else if (b.id === 'skipBtn') await api('/api/rerun/skip', { method: 'POST' });
     else if (d.mp4) { requestMp4(d.mp4); return; }
     else if (d.cue) { await api('/api/rerun/queue', { method: 'POST', body: JSON.stringify({ file: d.cue }) }); toast('cued ' + fmtSession(d.cue)); }
@@ -454,6 +905,8 @@
 
   refresh();
   setInterval(refresh, 5000);
+  autoTick();
+  setInterval(autoTick, 4000);
   loadAudience();
   setInterval(loadAudience, 5 * 60_000);
   window.addEventListener('resize', loadAudience);

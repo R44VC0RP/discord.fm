@@ -82,6 +82,8 @@ periodic voice refresh, feed writer (status.json / feed.xml / onair.txt)
 | icecast | stream + static files | drops listeners (rare: config changes only) |
 | bot | everything audio + Discord | SAFE — icecast fallback plays static for the gap. `docker compose up -d bot` after build |
 | admin | control room (fm.anoma.ly) | safe |
+| automation | private durable catalog/queue API (opt-in profile, playout flags off) | safe; no audio impact until a later approved bot cutover |
+| opencode | private pinned DJ planner with exactly seven queue tools | safe; no audio impact, and disabled unless automation DJ flags are explicitly enabled |
 | recorder | session capture + retention | safe (session continues as part file) |
 | tv | video encoder → relay | video blip on BOTH platforms |
 | mediamtx | local RTMP relay | video blip on BOTH platforms |
@@ -90,8 +92,11 @@ periodic voice refresh, feed writer (status.json / feed.xml / onair.txt)
 ### Deploy procedure (AFTER user approval)
 
 ```
+./scripts/deploy-preflight.sh lagoon-to-equestrian.exe.xyz:anomaly.fm-discord
 rsync -az --delete --exclude node_modules --exclude dist --exclude .env \
-  --exclude .git --exclude "music/*" --exclude "feed/*" \
+  --exclude .git --exclude "music/*" --exclude "music/originals/*" \
+  --exclude "music/ready/*" --exclude "state/*" --exclude "generated/*" \
+  --exclude "feed/*" \
   --exclude "recordings/*" --exclude "voicemails/*" \
   --exclude "web/current.html" ./ lagoon-to-equestrian.exe.xyz:anomaly.fm-discord/
 ssh box 'cd anomaly.fm-discord && docker compose --profile tv build <svc> \
@@ -99,6 +104,12 @@ ssh box 'cd anomaly.fm-discord && docker compose --profile tv build <svc> \
 ```
 Verify after: `https://anomaly.fm/` 200, `/radio` streams, bot logs show
 `[voice] live`, `docker stats` sane.
+
+The preflight is mandatory before any sync once automation state exists. It
+fails closed unless every private durable root is gitignored, untracked, and
+present in this canonical rsync command. If the target has `state/station.db`,
+it also creates and integrity-checks an online SQLite backup through the
+automation container before allowing rsync. Never copy a live DB/WAL pair.
 
 ## Key operational findings (learned the hard way)
 
@@ -110,6 +121,10 @@ Verify after: `https://anomaly.fm/` 200, `/radio` streams, bot logs show
   is stored escaped).
 - Single-file bind mounts go permanently stale when rsync replaces the file
   (new inode). Use directory mounts only (this bit us on the Caddyfile).
+- The private `opencode` service deliberately has no `.env` env_file. Pass only
+  server/provider/model settings plus `AUTOMATION_DJ_TOOL_TOKEN`; that scoped
+  token is accepted only by the seven DJ gateway routes, never general internal
+  automation APIs.
 
 ### Discord voice
 - DAVE E2EE is mandatory on non-Stage voice channels since March 2026.
@@ -136,14 +151,20 @@ Verify after: `https://anomaly.fm/` 200, `/radio` streams, bot logs show
 
 ### Presence model (single source of truth: the bot)
 - humans>0 → music ducks (MUSIC_DUCK_GAIN), recorder starts a session,
-  rerun pauses (position saved), status ON AIR.
+  rerun pauses (position saved), status ON AIR. When the last human leaves,
+  the recorder immediately finalizes that session (RECORDING_STOP_DELAY_S=0);
+  a later rejoin always starts a new session. The recorder watches status.json
+  changes (with 2s polling only as fallback), so only subsecond transport/frame
+  buffering—not an intentional polling delay—can remain at the end.
 - humans=0 → music back up. Rerun pacing (v2): RERUN_AFTER_LIVE_MIN (35)
   quiet time after live before any rerun; RERUN_GAP_MIN (35) of bed between
   reruns; rotation plays the OLDEST unaired session and repeats nothing
   until the whole archive has aired (state: feed/rerun-state.json). Admin
   queue bypasses the waits; paused reruns resume first; skip marks played.
-  The post-live wait must exceed RECORDING_STOP_DELAY_S (120s) or reruns
-  get re-recorded — trivially satisfied at 35min.
+- With automation playout enabled, its deterministic scheduler is the only
+  rerun owner. It imports the legacy played set once and writes
+  `feed/rerun-state.automation-export.json` for rollback; DJ tools never choose
+  reruns. Disable playout and restore that export before legacy reruns resume.
 - Bot publishes `feed/status.json` (player + recorder consume),
   `feed/onair.txt` (tv drawtext), `feed/feed.xml` (RSS), and persists the
   active music track in `feed/music-track.txt`.
@@ -185,6 +206,14 @@ Verify after: `https://anomaly.fm/` 200, `/radio` streams, bot logs show
 - The homepage rotates DAILY through `web/skins/*.html` (deterministic per
   station-timezone day; the bot copies the pick to `web/current.html`
   hourly + on boot; icecast alias `/` -> `/station/current.html`).
+- The authenticated control room can pin any enumerated skin indefinitely or
+  restore AUTO DAILY. Policy persists in `feed/skin-state.json`; the bot is
+  the sole writer of `web/current.html`, uses atomic replacement, and heals a
+  missing/modified output. A corrupt policy or deleted pin warns and safely
+  falls back to today's daily skin. GET `/state` re-enumerates skins, so newly
+  added files appear in the control room without a restart. If `FEED_DIR` is
+  disabled, daily rotation continues but manual controls are explicitly
+  unavailable because there is no durable policy storage.
 - `web/radio-core.js` is the invariant runtime (audio, autoplay, reconnect,
   volume, polling). Skins are self-contained HTML implementing the
   data-radio contract — see `web/skins/README.md` for the full spec,
@@ -252,9 +281,27 @@ Verify after: `https://anomaly.fm/` 200, `/radio` streams, bot logs show
   the three platforms (X/YouTube/anomaly.fm), and the catchphrase "where
   the anomaly here is only YOU" — with a random tone flavor per hour.
   ElevenLabs voices it (keys in box .env), ffmpeg decodes to PCM, and
-  `mixer.playAnnouncement()` airs it: bed ducks, rerun ducks to 20%,
-  crackle applies. Fail-soft: no LLM → plain time check; no TTS → skip hour.
+  `mixer.playAnnouncement()` airs it: bed ducks, legacy and automation
+  music/rerun program ducks smoothly to 20%, crackle applies, and live-human
+  master duck still composes independently. Fail-soft: no LLM → plain time
+  check; no TTS → skip hour.
 - Presence is re-checked after generation so it never talks over a live show.
+- Under automation the same announcer reserves a station-overlay boundary;
+  current/pending automation speech or hotline wins, so the ident skips rather
+  than collides. Never add a second hourly-ident owner.
+
+### Automation startup + public projection
+
+- Presence defaults UNKNOWN. No automation claim occurs before Discord ready,
+  successful voice join, and initial membership sync; reconnect gaps return to
+  UNKNOWN while the looping bed remains safe.
+- Feed writes are serialized atomic replacements. Public automation state is
+  limited to availability/depth and current cue type/title/artist/progress.
+- A claim with an ambiguous HTTP response is replayed with its original
+  idempotency key/body; no fresh claim is allowed until replay or the private
+  owned-claim reconciliation proves none. Server ordering holds later cues
+  behind another worker's claim across bot restart (same-worker music
+  crossfade is the only look-ahead exception).
 
 ## Control surfaces
 
@@ -273,6 +320,25 @@ Verify after: `https://anomaly.fm/` 200, `/radio` streams, bot logs show
 - Control room `https://fm.anoma.ly`: archive (play/mp4 download/cue/
   delete), rerun queue + auto toggle + skip, music bed upload/activate
   (hot-swap, no restart). Basic auth; creds in box `.env`.
+- Control room automation panels (asset library/upload, AI queue, AI DJ,
+  hotline AI review): the admin server proxies a FIXED ALLOWLIST of
+  automation routes with the internal token held server-side — the browser
+  never sees automation credentials, and every proxied response is rebuilt
+  from a per-field allowlist (no worker/lease/run IDs, locators, checksums).
+  ALL admin mutations (old and new, incl. bodyless skips + uploads) require
+  a same-origin browser context (Sec-Fetch-Site/Origin, fail-closed); the
+  bot's header-less mp4 render calls and Twilio-signed /call/* webhooks are
+  exempt. Uploads stream (60MB cap, max 2 concurrent, aggregate staging
+  budget) to `music/originals/.staging/` then rename atomically to a
+  server-generated `ast_*` name; automation ffprobes/hashes/registers.
+  Registration is idempotent + reconciled: files are deleted only on a
+  DEFINITIVE reject/duplicate-elsewhere; ambiguous outcomes are kept and
+  journaled in `.staging/unresolved.json`, auto-reconciled via catalog
+  lookup at startup/next upload. Panels fail soft to a visible "automation
+  offline" state when the profile isn't running. DJ mode + all automation
+  flags are env-only; the UI says so instead of pretending to toggle them.
+  Hotline review actions (approve/reject/restore) require the current
+  moderation version; AIRED is terminal. Tests: `cd admin && npm test`.
 - Bot control API (internal :8090): GET /state, POST /rerun/{queue,unqueue,
   skip,auto}, POST /music/track.
 - Feeds: https://anomaly.fm/feed/status.json (live/humans/members/rerun/
@@ -285,6 +351,11 @@ Verify after: `https://anomaly.fm/` 200, `/radio` streams, bot logs show
   lines, live-show baseline dots). Weekly recaps can be built on this log.
 
 ## Local dev tricks
+
+- Integration drills: `./scripts/opencode-tool-e2e.sh`,
+  `./scripts/automation-restore-drill.sh`, `./scripts/rsync-survival-drill.sh`, and the 15-minute
+  `./scripts/playout-soak.sh`. The scripted provider flag is test-only and must
+  remain false in production.
 
 - `cd bot && npm run build` must pass before any deploy.
 - Audio preview without deploying: render voice via macOS `say`, feed it

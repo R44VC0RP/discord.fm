@@ -9,6 +9,12 @@ dist/
 music/*
 !music/.gitkeep
 
+# private automation database and immutable/generated audio (never public/git)
+/state/
+/generated/
+/music/originals/
+/music/ready/
+
 # generated at runtime by the bot
 feed/*
 !feed/.gitkeep

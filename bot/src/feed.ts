@@ -5,7 +5,7 @@
  *   - status.json current state for programmatic use (website widgets)
  */
 
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 export interface FeedEvent {
@@ -23,13 +23,24 @@ export interface PresenceSnapshot {
   memberIds?: string[];
   /** Label of the recording currently replaying, if any. */
   rerun?: string | null;
+  /** Public-safe automation projection; never includes private asset details. */
+  automation?: { enabled: boolean; available?: boolean; current: null | { type: string; title: string; artist: string; progress_ms: number; duration_ms: number }; next_depth: number | null };
+  stationIdent?: { title: string } | null;
 }
 
 export function onAirLine(snapshot: PresenceSnapshot): string {
   if (snapshot.humans > 0) return `ON AIR — ${snapshot.members.join(', ')}`;
+  if (snapshot.stationIdent) return safeLine(`STATION ID — ${snapshot.stationIdent.title}`);
+  const cue = snapshot.automation?.current;
+  if (cue) {
+    const prefix = cue.type === 'rerun' ? 'RERUN' : cue.type === 'hotline' ? 'HOTLINE' : cue.type === 'music' ? 'NOW PLAYING' : 'ANOMALY FM';
+    return safeLine(`${prefix} — ${cue.title}${cue.artist ? ` — ${cue.artist}` : ''}`);
+  }
   if (snapshot.rerun) return `RERUN — ${snapshot.rerun}`;
   return snapshot.live ? 'INTERMISSION — music through the static' : 'OFF AIR — static';
 }
+
+function safeLine(value: string): string { return value.replace(/[\u0000-\u001f\u007f]/gu, ' ').replace(/\s+/gu, ' ').trim().slice(0, 220); }
 
 function esc(text: string): string {
   return text
@@ -44,6 +55,8 @@ export class ActivityFeed {
   private snapshot: PresenceSnapshot = { live: false, humans: 0, members: [] };
   private listeners: { web: number | null; youtube: number | null; total: number | null } | null = null;
   private enabled: boolean;
+  private revision = 0;
+  private writeChain: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly dir: string,
@@ -56,7 +69,7 @@ export class ActivityFeed {
     if (!this.enabled) return;
     try {
       await mkdir(this.dir, { recursive: true });
-      await this.flush();
+      await this.queueFlush();
       console.log(`[feed] writing to ${this.dir} (feed.xml, status.json)`);
     } catch (error) {
       this.enabled = false;
@@ -72,29 +85,42 @@ export class ActivityFeed {
     this.snapshot = snapshot;
     this.events.unshift({ name, action, humans: snapshot.humans, at: Date.now() });
     if (this.events.length > this.opts.maxItems) this.events.length = this.opts.maxItems;
-    await this.flush();
+    await this.queueFlush();
   }
 
   async update(snapshot: PresenceSnapshot): Promise<void> {
     if (!this.enabled) return;
     this.snapshot = snapshot;
-    await this.flush();
+    await this.queueFlush();
   }
 
   /** Periodic audience counts (web already excludes internal consumers). */
   async setListeners(breakdown: { web: number | null; youtube: number | null; total: number | null }): Promise<void> {
     if (!this.enabled || JSON.stringify(this.listeners) === JSON.stringify(breakdown)) return;
     this.listeners = breakdown;
-    await this.flush();
+    await this.queueFlush();
   }
 
-  private async flush(): Promise<void> {
+  private queueFlush(): Promise<void> {
+    const revision = ++this.revision;
+    const next = this.writeChain.then(() => this.flush(revision));
+    this.writeChain = next.catch(() => {});
+    return next;
+  }
+
+  private async flush(revision: number): Promise<void> {
+    if (revision !== this.revision) return;
     try {
+      const payloads = [
+        ['feed.xml', this.rss()],
+        ['status.json', this.json()],
+        ['onair.txt', onAirLine(this.snapshot) + '\n'],
+      ] as const;
       await Promise.all([
-        writeFile(join(this.dir, 'feed.xml'), this.rss(), 'utf8'),
-        writeFile(join(this.dir, 'status.json'), this.json(), 'utf8'),
-        // Single line consumed by the TV encoder's drawtext (reload=1).
-        writeFile(join(this.dir, 'onair.txt'), onAirLine(this.snapshot) + '\n', 'utf8'),
+        ...payloads.map(async ([name, value]) => {
+          const target = join(this.dir, name); const temporary = `${target}.${process.pid}.tmp`;
+          await writeFile(temporary, value, 'utf8'); await rename(temporary, target);
+        }),
       ]);
     } catch (error) {
       console.warn('[feed] write failed:', error instanceof Error ? error.message : error);
@@ -140,6 +166,8 @@ export class ActivityFeed {
         members: this.snapshot.members,
         memberIds: this.snapshot.memberIds ?? [],
         rerun: this.snapshot.rerun ?? null,
+        stationIdent: this.snapshot.stationIdent ?? null,
+        automation: this.snapshot.automation ?? { enabled: false, current: null, next_depth: null },
         // Combined audience (web stream + youtube); player shows this number.
         listeners: this.listeners?.total ?? null,
         sources: { web: this.listeners?.web ?? null, youtube: this.listeners?.youtube ?? null },

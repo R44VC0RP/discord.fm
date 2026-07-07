@@ -1,0 +1,9 @@
+{
+  "name": "anomaly-fm-admin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Control room server. No runtime dependencies; tests use node:test.",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}

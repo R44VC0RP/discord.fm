@@ -1,5 +1,9 @@
 # anomaly.fm-discord
 
+> Durable automation is opt-in and every behavior flag defaults false. See
+> `docs/automation-service.md` for migration, rollback, and local integration
+> drills.
+
 A Discord bot that sits in a voice channel, captures everyone speaking, runs the
 mix through an AM-radio filter chain, and broadcasts it as an internet radio
 station via Icecast. Embed it on any website with a single `<audio>` tag.
@@ -132,6 +136,16 @@ The bot publishes channel activity as static files served by Icecast:
 
 Set `FEED_DIR=off` to disable. Note: this publishes member display names at a
 public URL.
+
+## Session recordings
+
+The recorder stream-copies each live session into `recordings/`. By default,
+the session is finalized as soon as the last human leaves, and a later rejoin
+starts a new session. Set `RECORDING_STOP_DELAY_S` to a nonzero value only if
+you intentionally want to merge returns during an empty-channel grace period.
+`status.json` changes are watched and normally signal ffmpeg within milliseconds;
+transport/frame buffering can leave a subsecond tail, but there is no intentional
+seconds-long stop delay.
 
 ## Local development
 

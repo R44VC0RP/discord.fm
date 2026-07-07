@@ -43,6 +43,8 @@ export class RadioVoice {
 
   /** Invoked after joining/leaving a channel so occupancy-driven state can sync. */
   onPresenceChange?: () => void;
+  /** Connection gaps make cached channel membership unsafe for automation. */
+  onPresenceUnknown?: () => void;
 
   private player: AudioPlayer | null = null;
 
@@ -98,6 +100,7 @@ export class RadioVoice {
 
     connection.on(VoiceConnectionStatus.Disconnected, async () => {
       if (this.leaving) return;
+      this.onPresenceUnknown?.();
       try {
         // Might be a channel move or region switch; give it 5s to recover.
         await Promise.race([
@@ -144,6 +147,7 @@ export class RadioVoice {
     const channel = this.channel;
     if (!this.connection || !channel) return;
     console.log('[voice] periodic refresh: reconnecting');
+    this.onPresenceUnknown?.();
     this.teardown();
     try {
       await this.join(channel);

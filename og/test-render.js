@@ -20,6 +20,8 @@ const states = {
   live: { station: 'anomaly.fm', live: true, humans: 2, members: ['vogel.kit', 'exedev'], rerun: null, listeners: 14, sources: { web: 9, youtube: 5 }, updated: new Date().toISOString() },
   'live-long': { station: 'anomaly.fm', live: true, humans: 4, members: ['vogel.kit', 'exedev', 'someone with a very long name', 'fourth caller'], rerun: null, listeners: 133, sources: {}, updated: new Date().toISOString() },
   rerun: { station: 'anomaly.fm', live: true, humans: 0, members: [], rerun: 'Jul 2 | 2:54 PM | vogel.kit, exedev', listeners: 6, sources: {}, updated: new Date().toISOString() },
+  automation: { station: 'anomaly.fm', live: true, humans: 0, members: [], rerun: null, automation: { enabled: true, current: { type: 'music', title: 'Signal Through Rain', artist: 'Night Operator' }, next_depth: 8 }, listeners: 9, sources: {}, updated: new Date().toISOString() },
+  ident: { station: 'anomaly.fm', live: true, humans: 0, members: [], stationIdent: { title: 'Hourly time check' }, automation: { enabled: true, current: null, next_depth: 8 }, listeners: 9, sources: {}, updated: new Date().toISOString() },
   idle: { station: 'anomaly.fm', live: true, humans: 0, members: [], rerun: null, listeners: 3, sources: {}, updated: new Date().toISOString() },
   offair: null,
 };

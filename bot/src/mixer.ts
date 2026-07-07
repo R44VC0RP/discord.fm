@@ -73,6 +73,12 @@ export interface MusicFrameSource {
   readFrame(): Buffer | null;
 }
 
+/** A finite, controller-owned source on the automation bus. */
+export interface ProgramFrameSource extends MusicFrameSource {
+  /** True only after the decoder has drained; an underrun is not a finish. */
+  readonly finished?: boolean;
+}
+
 interface Pop {
   amp: number;
   decay: number;
@@ -182,7 +188,24 @@ export class Mixer {
   private deck: MusicFrameSource | null = null;
   /** One-shot announcement (hourly time checks): speaks over ducked bed/deck. */
   private announcement: { buf: Buffer; offset: number } | null = null;
+  onAnnouncementEnded?: () => void;
   private annDuck = 1;
+  // This is deliberately separate from the legacy bed/deck/announcement
+  // paths.  The playout controller supplies already-open finite sources; no
+  // filesystem, network, or queue work is ever performed from writeFrame().
+  private program: { source: ProgramFrameSource; speech: boolean } | null = null;
+  private programNext: { source: ProgramFrameSource; speech: boolean } | null = null;
+  private programFadeFrames = 0;
+  private programFadeAt = 0;
+  private programGain = 1;
+  private programDucked = false;
+  private programOpts: MusicOptions | null = null;
+  /** Lets the controller settle a source retired at a crossfade boundary. */
+  onProgramRetired?: (source: ProgramFrameSource) => void;
+  /** Incoming sources can fail/finish before their crossfade promotion. */
+  onProgramIncomingEnded?: (source: ProgramFrameSource) => void;
+  /** The active source drained and was detached without a successor. */
+  onProgramEnded?: (source: ProgramFrameSource) => void;
   private readonly crackle = new CrackleGenerator();
 
   setSink(sink: (frame: Buffer) => void): void {
@@ -204,6 +227,50 @@ export class Mixer {
     this.musicDucked = ducked;
   }
 
+  /** Configure the single live-presence envelope for all automation output. */
+  configureAutomation(opts: MusicOptions): void {
+    this.programOpts = opts;
+  }
+
+  setAutomationDucked(ducked: boolean): void {
+    this.programDucked = ducked;
+  }
+
+  /** Attach only into an empty automation slot; callers must not replace audio. */
+  setProgramSource(source: ProgramFrameSource | null, speech = false): boolean {
+    if (source && this.program) return false;
+    this.program = source ? { source, speech } : null;
+    // A cue attached while people are already live must begin at the live
+    // target, not emit one full-volume frame before the 1.2s envelope runs.
+    if (source) this.programGain = this.programDucked && this.programOpts ? this.programOpts.duckGain : 1;
+    if (!source) {
+      this.programNext = null;
+      this.programFadeFrames = 0;
+      this.programFadeAt = 0;
+    }
+    return true;
+  }
+
+  /** Preflight used by the controller before it acknowledges a cue start. */
+  canAttachProgram(crossfade: boolean, speech = false): boolean {
+    return crossfade
+      ? Boolean(this.program && !this.programNext && !speech && !this.program.speech)
+      : this.program === null;
+  }
+
+  /** Start an equal-power music transition. Both decoders keep advancing. */
+  crossfadeProgramSource(source: ProgramFrameSource, durationMs: number, speech = false): boolean {
+    if (!this.program || this.programNext || speech || this.program.speech) return false;
+    this.programNext = { source, speech };
+    this.programFadeFrames = Math.max(1, Math.round(durationMs / FRAME_MS));
+    this.programFadeAt = 0;
+    return true;
+  }
+
+  get automationActive(): boolean {
+    return this.program !== null;
+  }
+
   setDeckSource(source: MusicFrameSource | null): void {
     this.deck = source;
   }
@@ -211,6 +278,12 @@ export class Mixer {
   /** Queue a one-shot spoken announcement (48kHz stereo s16le PCM). */
   playAnnouncement(pcm: Buffer): void {
     if (pcm.length >= BYTES_PER_FRAME) this.announcement = { buf: pcm, offset: 0 };
+  }
+
+  /** Collision-safe form used by the station-level hourly overlay. */
+  tryPlayAnnouncement(pcm: Buffer): boolean {
+    if (this.announcement || pcm.length < BYTES_PER_FRAME) return false;
+    this.announcement = { buf: pcm, offset: 0 }; return true;
   }
 
   get announcing(): boolean {
@@ -291,10 +364,17 @@ export class Mixer {
         buf.copy(annFrame, 0, offset, end);
       }
       this.announcement.offset = end;
-      if (end >= buf.length) this.announcement = null;
+      if (end >= buf.length) {
+        this.announcement = null;
+        const ended = this.onAnnouncementEnded; this.onAnnouncementEnded = undefined;
+        queueMicrotask(() => ended?.());
+      }
     }
 
-    // While announcing, the rerun deck ducks under the voice (smoothed).
+    // While announcing, legacy reruns and non-speech automation program audio
+    // share one smoothed underlay envelope. The automation master gain remains
+    // independent, so a human joining during an ident composes the live duck
+    // with this 20% speech underlay while every decoder keeps advancing.
     const annTarget = annFrame ? 0.2 : 1;
     if (this.annDuck > annTarget) this.annDuck = Math.max(annTarget, this.annDuck - 0.06);
     else if (this.annDuck < annTarget) this.annDuck = Math.min(annTarget, this.annDuck + 0.06);
@@ -305,7 +385,7 @@ export class Mixer {
     let musicFrame: Buffer | null = null;
     if (this.music) {
       const { opts, source } = this.music;
-      const target = this.deck
+      const target = this.deck || this.program
         ? 0
         : this.musicDucked || this.announcement || annFrame
           ? opts.duckGain
@@ -319,13 +399,74 @@ export class Mixer {
     }
 
     const deckFrame = this.deck ? this.deck.readFrame() : null;
+    let programFrame: Buffer | null = null;
+    let incomingFrame: Buffer | null = null;
+    let programOutGain = 0;
+    let programInGain = 0;
+    let programSpeech = false;
+    if (this.program) {
+      const activeProgramSpeech = this.program.speech;
+      const incomingProgramSpeech = this.programNext?.speech ?? false;
+      const opts = this.programOpts;
+      const target = this.programDucked && opts ? opts.duckGain : 1;
+      const down = opts?.stepDown ?? 1;
+      const up = opts?.stepUp ?? 1;
+      if (this.programGain > target) this.programGain = Math.max(target, this.programGain - down);
+      else if (this.programGain < target) this.programGain = Math.min(target, this.programGain + up);
+
+      programFrame = this.program.source.readFrame();
+      programSpeech = this.program.speech;
+      if (this.programNext) {
+        incomingFrame = this.programNext.source.readFrame();
+        if (this.programNext.source.finished) {
+          // Never promote a drained incoming deck: leave the current program
+          // full-level and let the controller settle the failed/short cue.
+          const drained = this.programNext.source;
+          this.programNext = null; this.programFadeAt = 0; this.programFadeFrames = 0;
+          incomingFrame = null; programOutGain = this.programGain;
+          queueMicrotask(() => this.onProgramIncomingEnded?.(drained));
+        } else {
+          // Include both endpoints: the frame promoted to the incoming deck is
+          // already at its exact steady gain, avoiding a one-frame step.
+          const ratio = Math.min(1, (this.programFadeAt + 1) / this.programFadeFrames);
+          // Equal-power prevents the -6dB hole of a linear two-source fade.
+          programOutGain = Math.cos((Math.PI / 2) * ratio) * this.programGain;
+          programInGain = Math.sin((Math.PI / 2) * ratio) * this.programGain;
+          this.programFadeAt += 1;
+        }
+        if (this.programNext && (this.programFadeAt >= this.programFadeFrames || this.program.source.finished)) {
+          const retired = this.program.source;
+          this.program = this.programNext;
+          this.programNext = null;
+          this.programFadeAt = 0;
+          this.programFadeFrames = 0;
+          queueMicrotask(() => this.onProgramRetired?.(retired));
+        }
+      } else {
+        programOutGain = this.programGain;
+      }
+      // Station overlays are blocked while automation spoken/hotline cues are
+      // current or pending. Keep this type guard anyway: if a caller forces an
+      // announcement through the low-level mixer API, speech is never attenuated
+      // a second time. Music/rerun frames get the same underlay as legacy decks.
+      if (!activeProgramSpeech) programOutGain *= this.annDuck;
+      if (!incomingProgramSpeech) programInGain *= this.annDuck;
+      // Mixer slot transitions are the sole owner of normal completion
+      // notification. This fires on the same frame that detaches the source,
+      // so decoder completion never depends on one more readFrame() call.
+      if (this.program?.source.finished && !this.programNext) {
+        const ended = this.program.source;
+        this.program = null;
+        queueMicrotask(() => this.onProgramEnded?.(ended));
+      }
+    }
     // The announcement voice earns crackle just like live speakers.
-    const crackleFrame = this.crackle.frame(frames.length > 0 || annFrame !== null);
+    const crackleFrame = this.crackle.frame(frames.length > 0 || annFrame !== null || programSpeech);
 
     let out: Buffer;
-    if (frames.length === 0 && !musicFrame && !deckFrame && !annFrame) {
+    if (frames.length === 0 && !musicFrame && !deckFrame && !annFrame && !programFrame && !incomingFrame) {
       out = SILENT_FRAME;
-    } else if (frames.length === 1 && !musicFrame && !deckFrame && !annFrame) {
+    } else if (frames.length === 1 && !musicFrame && !deckFrame && !annFrame && !programFrame && !incomingFrame) {
       out = frames[0]!;
     } else {
       const mixed = Buffer.allocUnsafe(BYTES_PER_FRAME);
@@ -336,6 +477,8 @@ export class Mixer {
         for (const frame of frames) sum += frame.readInt16LE(i);
         if (musicFrame) sum += Math.round(musicFrame.readInt16LE(i) * gain);
         if (deckFrame) sum += Math.round(deckFrame.readInt16LE(i) * deckGain);
+        if (programFrame) sum += Math.round(programFrame.readInt16LE(i) * programOutGain);
+        if (incomingFrame) sum += Math.round(incomingFrame.readInt16LE(i) * programInGain);
         if (annFrame) sum += annFrame.readInt16LE(i);
         // Mono crackle onto both channels: sample index i/2, mono index i/4.
         if (crackleFrame) sum += crackleFrame[(i >> 2)]!;

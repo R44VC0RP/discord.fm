@@ -9,11 +9,18 @@ import type { AudienceSample } from './audience.js';
 import type { PresenceSnapshot } from './feed.js';
 import type { ListenerBreakdown } from './listeners.js';
 import type { Mixer } from './mixer.js';
-import type { RerunManager } from './rerun.js';
+import { InvalidSkinError, SkinControlUnavailableError, type SkinManager } from './skins.js';
 
 export interface ApiDeps {
   mixer: Mixer;
-  rerun: RerunManager;
+  rerun: {
+    state(): Promise<unknown>;
+    enqueue(file: string): void | Promise<unknown>;
+    unqueue(index: number): void | Promise<unknown>;
+    skip(): void | Promise<unknown>;
+    setAuto(enabled: boolean): void | Promise<unknown>;
+  };
+  skin: SkinManager | null;
   getSnapshot: () => PresenceSnapshot;
   getListeners: () => Promise<ListenerBreakdown>;
   getAudience: (hours: number) => AudienceSample[];
@@ -23,6 +30,8 @@ export interface ApiDeps {
   getVoicemailQueue: () => string[];
   voicemailReceived: (file: string) => Promise<void>;
   announce: (force: boolean) => Promise<{ fired: boolean; reason?: string }>;
+  /** Automation mode has no legacy spoken FIFO consumer. */
+  automationOwnsSpoken?: boolean;
 }
 
 async function readJson(req: http.IncomingMessage): Promise<Record<string, unknown>> {
@@ -32,15 +41,16 @@ async function readJson(req: http.IncomingMessage): Promise<Record<string, unkno
   return text ? (JSON.parse(text) as Record<string, unknown>) : {};
 }
 
-export function startApi(deps: ApiDeps, port = 8090): void {
+export function startApi(deps: ApiDeps, port = 8090): http.Server {
   const server = http.createServer(async (req, res) => {
     const send = (code: number, body: unknown) => {
       res.writeHead(code, { 'content-type': 'application/json' });
       res.end(JSON.stringify(body));
     };
+    let route = '';
     try {
       const url = new URL(req.url ?? '/', 'http://internal');
-      const route = `${req.method} ${url.pathname}`;
+      route = `${req.method} ${url.pathname}`;
 
       switch (route) {
         case 'GET /audience': {
@@ -53,27 +63,43 @@ export function startApi(deps: ApiDeps, port = 8090): void {
             music: { state: deps.mixer.musicState, track: deps.getMusicTrack() },
             listeners: await deps.getListeners(),
             rerun: await deps.rerun.state(),
+            skin: deps.skin ? await deps.skin.state() : null,
             voicemails: { queue: deps.getVoicemailQueue(), airing: deps.mixer.announcing },
           });
+        case 'POST /skin': {
+          const body = await readJson(req);
+          if (!deps.skin) return send(503, { error: 'skin manager unavailable' });
+          if (body.mode === 'daily') return send(200, await deps.skin.setDaily());
+          if (body.mode !== 'manual' || typeof body.skin !== 'string') {
+            return send(400, { error: 'expected daily mode or manual mode with skin' });
+          }
+          try {
+            return send(200, await deps.skin.setManual(body.skin));
+          } catch (error) {
+            if (error instanceof InvalidSkinError) return send(400, { error: error.message });
+            if (error instanceof SkinControlUnavailableError) return send(409, { error: error.message });
+            throw error;
+          }
+        }
         case 'POST /rerun/queue': {
           const body = await readJson(req);
           if (typeof body.file !== 'string' || !/^[\w.-]+\.mp3$/.test(body.file)) {
             return send(400, { error: 'invalid file' });
           }
-          deps.rerun.enqueue(body.file);
+          await deps.rerun.enqueue(body.file);
           return send(200, await deps.rerun.state());
         }
         case 'POST /rerun/unqueue': {
           const body = await readJson(req);
-          deps.rerun.unqueue(Number(body.index));
+          await deps.rerun.unqueue(Number(body.index));
           return send(200, await deps.rerun.state());
         }
         case 'POST /rerun/skip':
-          deps.rerun.skip();
+          await deps.rerun.skip();
           return send(200, await deps.rerun.state());
         case 'POST /rerun/auto': {
           const body = await readJson(req);
-          deps.rerun.setAuto(Boolean(body.enabled));
+          await deps.rerun.setAuto(Boolean(body.enabled));
           return send(200, await deps.rerun.state());
         }
         case 'POST /voicemail/received': {
@@ -93,6 +119,7 @@ export function startApi(deps: ApiDeps, port = 8090): void {
           if (typeof body.file !== 'string' || !/^[\w.-]+\.mp3$/.test(body.file)) {
             return send(400, { error: 'invalid file' });
           }
+          if (deps.automationOwnsSpoken) return send(409, { error: 'automation playout owns on-air voicemail; use the automation queue' });
           const position = deps.queueVoicemail(body.file);
           return send(200, { queued: position });
         }
@@ -108,8 +135,15 @@ export function startApi(deps: ApiDeps, port = 8090): void {
           return send(404, { error: 'not found' });
       }
     } catch (error) {
+      if (route === 'POST /skin' && error instanceof SyntaxError) {
+        return send(400, { error: 'invalid JSON body' });
+      }
+      if (route === 'POST /skin' && error instanceof SkinControlUnavailableError) {
+        return send(409, { error: error.message });
+      }
       send(500, { error: error instanceof Error ? error.message : 'internal error' });
     }
   });
   server.listen(port, '0.0.0.0', () => console.log(`[api] control api on :${port}`));
+  return server;
 }

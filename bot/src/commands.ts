@@ -131,6 +131,7 @@ export async function handleHotlineCommand(
   interaction: ChatInputCommandInteraction,
   radio: RadioVoice,
   queueVoicemail: (file: string) => number,
+  automationOwnsSpoken = false,
 ): Promise<void> {
   const sub = interaction.options.getSubcommand();
   const inbox = await listInbox();
@@ -167,6 +168,10 @@ export async function handleHotlineCommand(
       allowedMentions: { parse: [] },
     });
   } else if (sub === 'air') {
+    if (automationOwnsSpoken) {
+      await interaction.reply({ content: '📡 automation playout owns on-air hotline calls; queue this call through the control room automation queue.', flags: MessageFlags.Ephemeral });
+      return;
+    }
     const position = queueVoicemail(item.file);
     await interaction.reply({
       content: `📡 queued on air (#${position}): ${hotlineLabel(item)}`,

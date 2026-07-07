@@ -79,6 +79,16 @@ function airState(s) {
       sub: `${s.humans} IN BOOTH \u00b7 live now`,
     };
   }
+  if (s.stationIdent) return { kind: 'idle', line: 'STATION ID \u2014 ' + truncate(String(s.stationIdent.title || 'Anomaly FM'), 44), sub: 'from somewhere inside the anomaly' };
+  const cue = s.automation && s.automation.current;
+  if (cue) {
+    const title = truncate(String(cue.title || 'Anomaly FM'), 44);
+    const artist = cue.artist ? truncate(String(cue.artist), 36) : '';
+    if (cue.type === 'rerun') return { kind: 'rerun', line: 'RERUN \u2014 ' + title, sub: artist || 'from the archive' };
+    if (cue.type === 'hotline') return { kind: 'idle', line: 'HOTLINE \u2014 ' + title, sub: artist || 'listener transmission' };
+    if (cue.type === 'music') return { kind: 'idle', line: 'NOW PLAYING \u2014 ' + title, sub: artist || 'through the static' };
+    return { kind: 'idle', line: 'ANOMALY FM \u2014 ' + title, sub: artist || 'station transmission' };
+  }
   if (s.rerun) return { kind: 'rerun', line: 'RERUN \u2014 ' + truncate(String(s.rerun), 44), sub: 'from the archive' };
   if (s.live) return { kind: 'idle', line: 'INTERMISSION', sub: 'music through the static' };
   return { kind: 'offair', line: 'OFF AIR \u2014 static', sub: 'music through the static returns soon' };

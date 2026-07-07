@@ -22,8 +22,9 @@ import { hotlineLabel, listInbox } from './hotline.js';
 import { fetchAllListeners } from './listeners.js';
 import { FRAME_MS, Mixer } from './mixer.js';
 import { MusicSource } from './music.js';
+import { PlayoutController } from './playout.js';
 import { RerunManager } from './rerun.js';
-import { startSkinRotation } from './skins.js';
+import { SkinManager } from './skins.js';
 import { RadioVoice } from './voice.js';
 import { YouTubeChatBridge } from './ytchat.js';
 
@@ -61,6 +62,7 @@ const musicOpts = () => ({
   stepDown: FRAME_MS / Math.max(config.music.fadeDownMs, FRAME_MS),
   stepUp: FRAME_MS / Math.max(config.music.fadeUpMs, FRAME_MS),
 });
+mixer.configureAutomation(musicOpts());
 const trackStateFile = config.feed.dir ? join(config.feed.dir, 'music-track.txt') : '';
 let music: MusicSource | null = null;
 let activeTrack = config.music.file;
@@ -95,13 +97,40 @@ async function setMusicTrack(fileName: string): Promise<void> {
 
 // Rerun engine: replays session recordings while the channel is empty,
 // paced (post-live wait, gaps, oldest-first full rotation before repeats).
-const rerun = new RerunManager(mixer, config.rerun.recordingsDir, {
-  auto: config.rerun.auto,
-  afterLiveMs: config.rerun.afterLiveMin * 60_000,
-  gapMs: config.rerun.gapMin * 60_000,
-  stateFile: config.feed.dir ? join(config.feed.dir, 'rerun-state.json') : '',
-  timeZone: config.station.timeZone,
-});
+let rerun: RerunManager | null = null;
+
+// The controller is opt-in.  It owns only finite automation sources; the
+// looping bed remains a local, independent dead-air defense if automation is
+// absent or unreachable.
+let playout: PlayoutController | null = null;
+if (config.automation.playoutEnabled) {
+  if (!config.automation.internalToken) {
+    console.warn('[playout] AUTOMATION_PLAYOUT_ENABLED ignored: missing internal token');
+  } else {
+    playout = new PlayoutController(mixer, {
+      enabled: true,
+      url: config.automation.internalUrl,
+      token: config.automation.internalToken,
+      assetRoots: [config.music.dir, config.automation.generatedDir, config.rerun.recordingsDir, config.voicemail.dir],
+      crossfadeMs: Math.min(5000, Math.max(500, config.automation.crossfadeMs)),
+      onStateChange: () => { void feed.update(currentSnapshot()); void updateVoiceStatus(); },
+    });
+  }
+}
+
+// Exactly one rerun owner. In automation mode the legacy manager is not even
+// constructed, so it cannot attach a deck, arm timers, or write rotation state.
+if (!playout) {
+  rerun = new RerunManager(mixer, config.rerun.recordingsDir, {
+    auto: config.rerun.auto,
+    afterLiveMs: config.rerun.afterLiveMin * 60_000,
+    gapMs: config.rerun.gapMin * 60_000,
+    stateFile: config.feed.dir ? join(config.feed.dir, 'rerun-state.json') : '',
+    timeZone: config.station.timeZone,
+  });
+}
+
+let activeStationIdent: { title: string } | null = null;
 
 function currentSnapshot(): PresenceSnapshot {
   const channel = radio.connectedChannel;
@@ -113,7 +142,9 @@ function currentSnapshot(): PresenceSnapshot {
     humans: members.filter((member) => !member.user.bot).length,
     members: members.map((member) => member.displayName),
     memberIds: members.map((member) => member.id),
-    rerun: rerun.nowPlayingLabel,
+    rerun: rerun?.nowPlayingLabel ?? null,
+    automation: playout?.publicState(),
+    stationIdent: activeStationIdent,
   };
 }
 
@@ -130,6 +161,9 @@ async function updateVoiceStatus(): Promise<void> {
   const count = listeners && listeners.total !== null ? ` — ${listeners.total} listening` : '';
   let text: string;
   if (snapshot.humans > 0) text = `🔴 ON AIR${count}`;
+  else if (snapshot.stationIdent) text = `📻 STATION ID — ${snapshot.stationIdent.title}${count}`;
+  else if (snapshot.automation?.current?.type === 'rerun') text = `📼 RERUN ${snapshot.automation.current.title}${count}`;
+  else if (snapshot.automation?.current) text = `🎶 ${snapshot.automation.current.title}${count}`;
   else if (snapshot.rerun) text = `📼 RERUN ${snapshot.rerun}${count}`;
   else if (snapshot.live) text = `🎶 music through the static${count}`;
   else text = '📡 off air — static';
@@ -151,30 +185,58 @@ async function updateVoiceStatus(): Promise<void> {
 setInterval(() => void updateVoiceStatus(), 120_000);
 
 /** Recompute occupancy: duck music, drive reruns, refresh the public feed. */
-function syncPresence(): PresenceSnapshot {
+function syncPresence(publishAutomation = true): PresenceSnapshot {
   const snapshot = currentSnapshot();
   mixer.setDucked(snapshot.humans > 0);
-  rerun.onPresence(snapshot.humans);
+  if (playout) { if (publishAutomation) void playout.setPresence(snapshot.humans).catch(() => {}); }
+  else rerun?.onPresence(snapshot.humans);
   void feed.update(snapshot);
   void updateVoiceStatus();
   return snapshot;
 }
 
-radio.onPresenceChange = () => void syncPresence();
-rerun.onChange = () => {
+radio.onPresenceChange = () => {
+  if (playout && !radio.connectedChannel) {
+    playout.setPresenceUnknown();
+    void feed.update(currentSnapshot());
+    return;
+  }
+  const snapshot = syncPresence(false);
+  if (playout) void playout.setPresence(snapshot.humans).then(() => playout?.start()).catch(() => {});
+};
+radio.onPresenceUnknown = () => {
+  playout?.setPresenceUnknown();
+  void feed.update(currentSnapshot());
+};
+if (rerun) rerun.onChange = () => {
   void feed.update(currentSnapshot());
   void updateVoiceStatus();
 };
 
-// Daily homepage skin rotation (deterministic per station-timezone day).
+// Homepage skin policy: deterministic daily rotation unless the control room
+// pins a manual choice. This bot remains the sole current.html writer.
+let skin: SkinManager | null = null;
 if (config.web.dir && existsSync(config.web.dir)) {
-  startSkinRotation(config.web.dir, config.station.timeZone);
+  skin = new SkinManager(
+    config.web.dir,
+    config.station.timeZone,
+    config.feed.dir ? join(config.feed.dir, 'skin-state.json') : '',
+  );
+  await skin.start();
 }
 
 // Hourly time checks (only while nobody is live; manual fire via the API).
 let announcer: Announcer | null = null;
 if (config.announcer.elevenLabsKey && config.announcer.voiceId) {
-  announcer = new Announcer({ mixer, getSnapshot: currentSnapshot, getListeners: fetchAllListeners });
+  announcer = new Announcer({
+    mixer, getSnapshot: currentSnapshot, getListeners: fetchAllListeners,
+    canStart: () => !playout || playout.canAirStationOverlay(),
+    reserve: () => playout ? playout.reserveStationOverlay() : (() => {}),
+    onStateChange: (active, title) => {
+      activeStationIdent = active && title ? { title } : null;
+      void feed.update(currentSnapshot()); void updateVoiceStatus();
+    },
+  });
   announcer.start();
 }
 
@@ -209,7 +271,10 @@ async function announceVoicemail(fileName: string): Promise<void> {
 }
 
 setInterval(() => {
-  if (voicemailBusy || voicemailQueue.length === 0 || mixer.announcing) return;
+  // During automation cutover hotline audio is admitted only as a durable,
+  // presence-gated cue. Keeping this legacy FIFO out avoids two owners for
+  // spoken output (the inbox/preview commands remain available).
+  if (playout || voicemailBusy || voicemailQueue.length === 0 || mixer.announcing) return;
   voicemailBusy = true;
   const file = voicemailQueue.shift()!;
   void (async () => {
@@ -231,15 +296,25 @@ setInterval(() => {
 const audience = new AudienceLog(config.feed.dir || '/tmp', fetchAllListeners, currentSnapshot);
 if (config.feed.dir) void audience.start();
 
+const rerunControl = playout ? {
+  state: () => playout!.rerunState(),
+  enqueue: (file: string) => playout!.queueRerun(file),
+  unqueue: (index: number) => playout!.unqueueRerun(index),
+  skip: () => playout!.skipRerun(),
+  setAuto: (enabled: boolean) => playout!.setRerunAuto(enabled),
+} : rerun!;
+
 startApi({
   mixer,
-  rerun,
+  rerun: rerunControl,
+  skin,
   getSnapshot: currentSnapshot,
   getListeners: fetchAllListeners,
   getAudience: (hours) => audience.recent(hours),
   getMusicTrack: () => (activeTrack ? basename(activeTrack) : ''),
   setMusicTrack,
   queueVoicemail,
+  automationOwnsSpoken: Boolean(playout),
   getVoicemailQueue: () => [...voicemailQueue],
   voicemailReceived: announceVoicemail,
   announce: (force) =>
@@ -318,6 +393,8 @@ client.once(Events.ClientReady, async (readyClient) => {
         error instanceof Error ? error.message : error,
       );
     }
+  } else if (playout) {
+    console.warn('[playout] no configured voice channel; presence remains unknown and claims stay blocked');
   }
 });
 
@@ -327,7 +404,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (interaction.commandName === 'radio') {
       await handleRadioCommand(interaction, radio, mixer, encoder);
     } else if (interaction.commandName === 'hotline') {
-      await handleHotlineCommand(interaction, radio, queueVoicemail);
+      await handleHotlineCommand(interaction, radio, queueVoicemail, Boolean(playout));
     } else if (interaction.commandName === 'clip') {
       await handleClipCommand(interaction, clipBuffer, currentSnapshot);
     }
@@ -364,6 +441,7 @@ client.on(Events.VoiceStateUpdate, (oldState, newState) => {
 async function shutdown(signal: string): Promise<void> {
   console.log(`[bot] ${signal} received, shutting down`);
   radio.leave();
+  playout?.stop();
   mixer.stop();
   music?.stop();
   encoder.stop();

@@ -22,6 +22,10 @@ interface AnnouncerDeps {
   mixer: Mixer;
   getSnapshot: () => PresenceSnapshot;
   getListeners: () => Promise<ListenerBreakdown>;
+  /** Mutual exclusion with durable automation speech/hotline boundaries. */
+  canStart?: () => boolean;
+  reserve?: () => (() => void) | null;
+  onStateChange?: (active: boolean, title: string | null) => void;
 }
 
 const SYSTEM_PROMPT = `You write spoken idents for anomaly.fm, a mysterious late-night AM radio station broadcasting "from somewhere inside the anomaly". Write ONLY the words to be spoken - no quotes, no stage directions, no emojis. 3-5 short sentences, under 90 words. Calm, warm, slightly uncanny late-night DJ energy.
@@ -95,34 +99,48 @@ export class Announcer {
     }, next.getTime() - now.getTime());
   }
 
-  async fire(force = false): Promise<{ fired: boolean; reason?: string }> {
+  async fire(_force = false, expiresAt = Date.now() + 115_000): Promise<{ fired: boolean; reason?: string }> {
+    let release: (() => void) | null = null;
+    let airing = false;
     try {
-      if (!force && this.deps.getSnapshot().humans > 0) {
+      if (this.deps.getSnapshot().humans > 0) {
         console.log('[announcer] live show on air; skipping time check');
         return { fired: false, reason: 'live show on air' };
+      }
+      if (!this.deps.canStart?.() && this.deps.canStart) return { fired: false, reason: 'automation speech pending or active' };
+      if (this.deps.reserve) {
+        release = this.deps.reserve();
+        if (!release) return { fired: false, reason: 'automation speech reservation unavailable' };
       }
       const script = await this.writeScript();
       console.log(`[announcer] script: ${script}`);
       const pcm = await this.speak(script);
       // Someone may have gone live while we were generating.
-      if (!force && this.deps.getSnapshot().humans > 0) {
+      if (this.deps.getSnapshot().humans > 0) {
         console.log('[announcer] went live during generation; discarding');
         return { fired: false, reason: 'went live during generation' };
       }
-      this.deps.mixer.playAnnouncement(pcm);
+      if (Date.now() >= expiresAt) return { fired: false, reason: 'ident expired before air' };
+      if (!release && !this.deps.canStart?.() && this.deps.canStart) return { fired: false, reason: 'automation speech became pending' };
+      if (!this.deps.mixer.tryPlayAnnouncement(pcm)) return { fired: false, reason: 'announcement slot busy' };
+      airing = true;
+      this.deps.onStateChange?.(true, 'Hourly time check');
+      this.deps.mixer.onAnnouncementEnded = () => { this.deps.onStateChange?.(false, null); release?.(); };
       console.log(`[announcer] on air (~${Math.round(pcm.length / (48000 * 4))}s)`);
       return { fired: true };
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       console.warn('[announcer] skipped:', reason);
       return { fired: false, reason };
+    } finally {
+      if (!airing) release?.();
     }
   }
 
   async writeScript(): Promise<string> {
     const eastern = timeIn('America/New_York');
     const pacific = timeIn('America/Los_Angeles');
-    const fallback = `It's ${eastern} Eastern, ${pacific} Pacific. You're listening to anomaly FM, transmitting from somewhere inside the anomaly.`;
+    const fallback = `It's ${eastern} Eastern, ${pacific} Pacific. Weather is unavailable this hour. Find us on X, YouTube, and anomaly.fm, where the anomaly here is only YOU.`;
     const { zenKey, zenUrl, zenModel } = config.announcer;
     if (!zenKey) return fallback;
 
