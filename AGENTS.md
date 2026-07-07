@@ -164,7 +164,12 @@ automation container before allowing rsync. Never copy a live DB/WAL pair.
 - With automation playout enabled, its deterministic scheduler is the only
   rerun owner. It imports the legacy played set once and writes
   `feed/rerun-state.automation-export.json` for rollback; DJ tools never choose
-  reruns. Disable playout and restore that export before legacy reruns resume.
+  reruns. Its AUTO setting is durable/versioned in SQLite and defaults ON at
+  migration; OFF withdraws only unclaimed automatic filler and never interrupts
+  a playing rerun. Explicit operator queue entries bypass OFF. The control room
+  routes AUTO/SKIP to automation while automation owns playout and to legacy
+  otherwise, showing OFFLINE rather than silently switching owners. Disable
+  playout and restore that export before legacy reruns resume.
 - Bot publishes `feed/status.json` (player + recorder consume),
   `feed/onair.txt` (tv drawtext), `feed/feed.xml` (RSS), and persists the
   active music track in `feed/music-track.txt`.
@@ -302,6 +307,14 @@ automation container before allowing rsync. Never copy a live DB/WAL pair.
   owned-claim reconciliation proves none. Server ordering holds later cues
   behind another worker's claim across bot restart (same-worker music
   crossfade is the only look-ahead exception).
+
+### Automation music crossfades
+
+- Music→music only: default stored equal-power fade is 6000ms (allowed
+  500–10000ms). A local one-shot prefetch deadline fires ~250ms early to absorb
+  claim/hash/ffmpeg startup; normal polling remains 1s. Speech, hotline, rerun,
+  and station-ID boundaries never crossfade. Existing stored 3000ms cues remain
+  3000ms after the environment default changes.
 
 ## Control surfaces
 

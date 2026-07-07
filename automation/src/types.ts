@@ -48,6 +48,7 @@ export interface AutomationConfig {
   elevenLabsKey: string;
   elevenLabsVoiceId: string;
   elevenLabsModelId: string;
+  elevenLabsSpeechSpeed: number;
   elevenLabsBaseUrl: string;
   generationPollMs: number;
   generationLeaseMs: number;
@@ -66,7 +67,6 @@ export interface AutomationConfig {
   djDailyModelTokenLimit: number;
   ttsDailyCharacterLimit: number;
   feedDir: string;
-  rerunAuto: boolean;
   rerunAfterLiveMs: number;
   rerunGapMs: number;
   rerunPollMs: number;

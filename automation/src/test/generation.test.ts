@@ -17,10 +17,15 @@ test('mocked ElevenLabs response is canonicalized and loudness-probed with no re
   const output = path.join(fixture.config.generatedDir, 'canonical.tmp.mp3');
   await execFileAsync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-ar', '44100', '-ac', '1', '-c:a', 'libmp3lame', '-b:a', '128k', providerMp3]);
   const bytes = await fsp.readFile(providerMp3);
-  const fakeFetch = async () => new Response(bytes, { status: 200, headers: { 'content-type': 'audio/mpeg', 'x-request-id': 'mock-eleven-request' } });
-  const rendered = await new ElevenLabsRenderer(fixture.config, fakeFetch as typeof fetch).render('Safe mocked speech.', output, AbortSignal.timeout(30_000));
+  let request: Record<string, unknown> | undefined;
+  const fakeFetch = async (_url: string | URL | Request, init?: RequestInit) => {
+    request = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    return new Response(bytes, { status: 200, headers: { 'content-type': 'audio/mpeg', 'x-request-id': 'mock-eleven-request' } });
+  };
+  const rendered = await new ElevenLabsRenderer(fixture.config, fakeFetch as typeof fetch).render('Safe [pause] mocked [sigh] speech.', output, AbortSignal.timeout(30_000));
   assert.equal(rendered.probe.sampleRateHz, 48_000); assert.equal(rendered.probe.channels, 2); assert.equal(rendered.probe.codecName, 'mp3');
   assert.ok(Number.isFinite(rendered.probe.loudnessLufs)); assert.equal(rendered.providerRequestId, 'mock-eleven-request');
+  assert.deepEqual(request, { text: 'Safe <break time="1.0s" /> mocked … speech.', model_id: 'eleven_multilingual_v2', voice_settings: { speed: 0.92 } });
   fixture.store.close(); await fsp.rm(fixture.root, { recursive: true, force: true });
 });
 
@@ -104,6 +109,34 @@ test('daily TTS character budget defers work without consuming attempts or calli
   assert.ok(new Date(job.claim_expires_at).getTime() > Date.now());
   assert.equal((fixture.store.db.prepare('SELECT count(*) count FROM usage_events').get() as { count: number }).count, 0);
   assert.equal((fixture.store.db.prepare('SELECT state FROM cues').get() as { state: string }).state, 'GENERATING');
+  fixture.store.close();
+
+  // Restarting with an unlimited breaker reclaims a daily-budget deferral and
+  // still records the actual TTS use.
+  const { AutomationStore } = await import('../store.js');
+  const resumedConfig = { ...fixture.config, ttsDailyCharacterLimit: 0 };
+  const resumed = new AutomationStore(resumedConfig);
+  const resumedWorker = new GenerationWorker(resumed, resumedConfig, {
+    render: async (_script, output) => { calls++; await fsp.writeFile(output, Buffer.alloc(2048, 4)); return { probe }; },
+  });
+  await resumedWorker.tick();
+  assert.equal(calls, 1);
+  assert.equal((resumed.db.prepare('SELECT failure_code,claim_expires_at FROM generation_jobs').get() as { failure_code: string | null; claim_expires_at: string | null }).failure_code, null);
+  assert.equal((resumed.db.prepare("SELECT count(*) count FROM usage_events WHERE kind='TTS_CHARACTERS'").get() as { count: number }).count, 1);
+  resumed.close(); await fsp.rm(fixture.root, { recursive: true, force: true });
+});
+
+test('zero TTS daily limit never blocks and records each rendered script', async () => {
+  const fixture = await testFixture({ generationEnabled: true, ttsDailyCharacterLimit: 0 });
+  fixture.store.enqueueCommentary({ script: 'This script exceeds the old test budget.', expectedRevision: 0, idempotencyKey: 'tts-unlimited:queue' });
+  let calls = 0;
+  const worker = new GenerationWorker(fixture.store, fixture.config, {
+    render: async (_script, output) => { calls++; await fsp.writeFile(output, Buffer.alloc(2048, 5)); return { probe }; },
+  });
+  await worker.tick();
+  assert.equal(calls, 1);
+  assert.equal((fixture.store.db.prepare("SELECT count(*) count FROM usage_events WHERE kind='TTS_CHARACTERS'").get() as { count: number }).count, 1);
+  assert.equal((fixture.store.db.prepare('SELECT state FROM cues').get() as { state: string }).state, 'READY');
   fixture.store.close(); await fsp.rm(fixture.root, { recursive: true, force: true });
 });
 

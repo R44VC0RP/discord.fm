@@ -1,8 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import Database from 'better-sqlite3';
 import type { AutomationConfig, CueType, ProbeResult } from './types.js';
+import { normalizeTtsAuditText, TtsScriptMarkupError } from './tts.js';
 import { DomainError, invariant } from './errors.js';
 import { now, requestHash, stableId, text } from './validation.js';
 import { DJ_TOOL_NAMES } from './dj-tools.js';
@@ -33,6 +35,13 @@ export interface EnqueueBase {
   expiresAt?: string | null;
 }
 
+type RestoreIdentity = {
+  locator: string;
+  parent: string;
+  file: { dev: bigint; ino: bigint; size: bigint; mtimeNs: bigint; ctimeNs: bigint };
+  directory: { dev: bigint; ino: bigint; mtimeNs: bigint; ctimeNs: bigint };
+};
+
 export interface ClaimedGenerationJob {
   jobId: string;
   generationId: string;
@@ -54,6 +63,8 @@ export interface RerunSchedulerState {
   importedAt: string;
 }
 
+interface RerunAutoSetting { enabled: boolean; version: number; }
+
 export class AutomationStore {
   readonly db: Database.Database;
 
@@ -70,6 +81,7 @@ export class AutomationStore {
       this.migrate();
       const integrity = this.db.pragma('quick_check') as Array<{ quick_check: string }>;
       if (integrity[0]?.quick_check !== 'ok') throw new Error(`SQLite quick_check failed: ${JSON.stringify(integrity)}`);
+      this.recoverDailyBudgetDeferrals();
     } catch (error) {
       this.db.close();
       throw error;
@@ -77,6 +89,20 @@ export class AutomationStore {
   }
 
   close(): void { this.db.close(); }
+
+  /**
+   * Daily-budget deferrals are configuration-derived, not provider failures.
+   * Re-evaluate them after every process start so a changed limit can take
+   * effect immediately. Positive limits will be checked again before any work
+   * is admitted; provider/error backoff is deliberately left untouched.
+   */
+  private recoverDailyBudgetDeferrals(): void {
+    const timestamp = now();
+    this.db.transaction(() => {
+      this.db.prepare("UPDATE dj_state SET backoff_until=NULL,last_result=NULL,updated_at=? WHERE singleton=1 AND last_result='DAILY_BUDGET'").run(timestamp);
+      this.db.prepare("UPDATE generation_jobs SET claim_expires_at=NULL,failure_code=NULL,failure_detail=NULL,updated_at=? WHERE state='PENDING' AND failure_code='TTS_DAILY_BUDGET'").run(timestamp);
+    })();
+  }
 
   async backup(): Promise<{ path: string; integrity: 'ok' }> {
     const backupDir = path.join(path.dirname(this.config.databasePath), 'backups');
@@ -138,7 +164,7 @@ export class AutomationStore {
       const state: RerunSchedulerState = {
         schema: 1,
         played: [...new Set(legacyPlayed.filter((name) => /^session-[\w.-]+\.mp3$/u.test(name)))].sort(),
-        queue: [], auto: this.config.rerunAuto, activeFile: null, activeCueId: null,
+        queue: [], auto: this.rerunAutoSetting().enabled, activeFile: null, activeCueId: null,
         lastLiveEndedAt: null, lastFinishedAt: null, importedAt: timestamp,
       };
       this.writeRerunStateLocked(state, timestamp);
@@ -148,13 +174,49 @@ export class AutomationStore {
 
   rerunState(): RerunSchedulerState {
     const row = this.db.prepare("SELECT value_json FROM scheduler_state WHERE key='rerun_v1'").get() as { value_json: string } | undefined;
-    return row ? this.parseRerunState(row.value_json) : this.initializeRerunState([]);
+    const state = row ? this.parseRerunState(row.value_json) : this.initializeRerunState([]);
+    // The dedicated versioned setting is authoritative. Keeping the field in
+    // rerun_v1 maintains rollback/export compatibility with older builds.
+    state.auto = this.rerunAutoSetting().enabled;
+    return state;
   }
 
-  setRerunAuto(enabled: boolean): RerunSchedulerState {
-    return this.db.transaction(() => {
-      const state = this.rerunState(); state.auto = enabled; this.writeRerunStateLocked(state); return state;
-    })();
+  rerunAutoSetting(): RerunAutoSetting {
+    const row = this.db.prepare("SELECT value_json,version FROM automation_settings WHERE key='rerun_auto'").get() as { value_json: string; version: number } | undefined;
+    invariant(row, 'RERUN_SETTING_MISSING', 'durable rerun setting is missing', 500);
+    const parsed = JSON.parse(row.value_json) as { enabled?: unknown };
+    invariant(typeof parsed.enabled === 'boolean' && Number.isInteger(row.version) && row.version >= 1, 'RERUN_SETTING_INVALID', 'durable rerun setting is invalid', 500);
+    return { enabled: parsed.enabled, version: row.version };
+  }
+
+  setRerunAuto(input: { enabled: boolean; expectedVersion: number; idempotencyKey: string }): Record<string, unknown> {
+    return this.db.transaction(() => this.idempotent('rerun_auto', input.idempotencyKey, input, () => {
+      const current = this.rerunAutoSetting();
+      if (current.version !== input.expectedVersion) {
+        throw new DomainError('RERUN_VERSION_CONFLICT', 'rerun setting version is stale', 409, { expected: input.expectedVersion, actual: current.version });
+      }
+      const timestamp = now();
+      this.db.prepare("UPDATE automation_settings SET value_json=?,version=version+1,updated_at=? WHERE key='rerun_auto'")
+        .run(JSON.stringify({ enabled: input.enabled }), timestamp);
+      const state = this.rerunState();
+      state.auto = input.enabled;
+      let canceledReady = false;
+      // OFF never interrupts a CLAIMED/PLAYING rerun. It does withdraw an
+      // unclaimed automatic filler so it cannot beat newly queued DJ music.
+      if (!input.enabled && state.activeCueId) {
+        const cue = this.db.prepare("SELECT * FROM cues WHERE id=? AND type='rerun' AND source='deterministic_rerun' AND state='READY'").get(state.activeCueId) as Row | undefined;
+        if (cue) {
+          const revision = this.bumpRevision(timestamp);
+          this.db.prepare("UPDATE cues SET state='CANCELED',failure_code='RERUN_AUTO_DISABLED',completed_at=?,updated_at=? WHERE id=? AND state='READY'")
+            .run(timestamp, timestamp, cue.id);
+          this.event(String(cue.id), null, 'CANCELED', 'READY', 'CANCELED', revision, 'rerun_scheduler', 'RERUN_AUTO_DISABLED');
+          state.activeCueId = null; state.activeFile = null; canceledReady = true;
+        }
+      }
+      this.writeRerunStateLocked(state, timestamp);
+      const setting = this.rerunAutoSetting();
+      return { accepted: true, enabled: setting.enabled, version: setting.version, queue_revision: this.revision(), canceled_ready: canceledReady };
+    }))();
   }
 
   queueRerun(file: string): RerunSchedulerState {
@@ -196,6 +258,7 @@ export class AutomationStore {
   admitRerun(file: string, assetId: string, manual: boolean): Record<string, unknown> {
     return this.db.transaction(() => {
       const state = this.rerunState();
+      if (!manual && !state.auto) return { accepted: false, reason: 'AUTO_DISABLED', queue_revision: this.revision() };
       const active = this.db.prepare("SELECT id FROM cues WHERE type='rerun' AND source IN ('deterministic_rerun','admin_rerun') AND state IN ('READY','CLAIMED','PLAYING') LIMIT 1").get();
       if (active) return { accepted: false, reason: 'ACTIVE_RERUN', queue_revision: this.revision() };
       const asset = this.getReadyAsset(assetId, ['rerun']);
@@ -212,6 +275,7 @@ export class AutomationStore {
 
   rerunControlSnapshot(recordingFiles: string[]): Record<string, unknown> {
     const state = this.rerunState();
+    const setting = this.rerunAutoSetting();
     const cue = state.activeCueId ? this.db.prepare('SELECT state,last_offset_ms FROM cues WHERE id=?').get(state.activeCueId) as Row | undefined : undefined;
     const presence = this.db.prepare('SELECT humans,known FROM presence_state WHERE singleton=1').get() as { humans: number; known: number };
     const gate = Math.max(
@@ -223,9 +287,10 @@ export class AutomationStore {
       playing: cue?.state === 'PLAYING' ? state.activeFile : null,
       position: cue?.state === 'PLAYING' ? Math.round(Number(cue.last_offset_ms || 0) / 1000) : null,
       paused: cue?.state === 'READY' && state.activeFile ? { file: state.activeFile, offset: Math.round(Number(cue.last_offset_ms || 0) / 1000) } : null,
-      queue: [...state.queue], auto: state.auto,
-      nextUp: presence.known && presence.humans === 0 ? (state.queue[0] ?? candidates[0] ?? recordingFiles[0] ?? null) : null,
-      waitSeconds: presence.known && presence.humans === 0 ? Math.max(0, Math.ceil((gate - Date.now()) / 1000)) : null,
+      queue: [...state.queue], auto: setting.enabled, control_version: setting.version,
+      owner: 'automation', available: true, manual_bypasses_auto: true,
+      nextUp: presence.known && presence.humans === 0 && (state.queue.length > 0 || setting.enabled) ? (state.queue[0] ?? candidates[0] ?? recordingFiles[0] ?? null) : null,
+      waitSeconds: presence.known && presence.humans === 0 && (state.queue.length > 0 || setting.enabled) ? Math.max(0, Math.ceil((gate - Date.now()) / 1000)) : null,
       cycle: { played: state.played.filter((file) => recordingFiles.includes(file)).length, total: recordingFiles.length },
     };
   }
@@ -266,6 +331,13 @@ export class AutomationStore {
     this.db.prepare('INSERT INTO idempotency_keys(scope,key,request_hash,response_json,created_at) VALUES(?,?,?,?,?)')
       .run(scope, key, hash, JSON.stringify(result), now());
     return result;
+  }
+
+  private replayIdempotent<T>(scope: string, key: string, request: unknown): T | undefined {
+    const prior = this.db.prepare('SELECT request_hash,response_json FROM idempotency_keys WHERE scope=? AND key=?').get(scope, key) as { request_hash: string; response_json: string } | undefined;
+    if (!prior) return undefined;
+    if (prior.request_hash !== requestHash(request)) throw new DomainError('IDEMPOTENCY_CONFLICT', 'idempotency key was used with a different request', 409);
+    return JSON.parse(prior.response_json) as T;
   }
 
   putAsset(input: AssetInput): { assetId: string; created: boolean } {
@@ -432,6 +504,165 @@ export class AutomationStore {
     return canonical;
   }
 
+  retireMusicAsset(input: { assetId: string; expectedRevision: number; idempotencyKey: string }): Record<string, unknown> {
+    this.reconcile();
+    return this.db.transaction(() => this.idempotent(`asset_retire:${input.assetId}`, input.idempotencyKey, input, () => {
+      this.assertRevision(input.expectedRevision);
+      const asset = this.db.prepare('SELECT * FROM assets WHERE id=?').get(input.assetId) as Row | undefined;
+      invariant(asset, 'ASSET_NOT_FOUND', 'asset does not exist', 404);
+      invariant(asset.kind === 'music', 'ASSET_KIND_MISMATCH', 'only music assets can be retired');
+      invariant(asset.status === 'READY', 'ASSET_STATE_CONFLICT', `cannot retire an asset in ${asset.status} state`, 409);
+      const allReferences = this.db.prepare('SELECT * FROM cues WHERE asset_id=?').all(input.assetId) as Row[];
+      const references = allReferences.filter((cue) => ['DRAFT', 'GENERATING', 'VALIDATING', 'READY', 'CLAIMED', 'PLAYING'].includes(String(cue.state)));
+      const referencedGroupIds = [...new Set(allReferences.map((cue) => cue.group_id).filter(Boolean).map(String))];
+      const groupIds = [...new Set(references.map((cue) => cue.group_id).filter(Boolean).map(String))];
+      const claimed = references.some((cue) => cue.state === 'CLAIMED' || cue.state === 'PLAYING')
+        || referencedGroupIds.some((groupId) => Boolean(this.db.prepare("SELECT 1 FROM cues WHERE group_id=? AND state IN ('CLAIMED','PLAYING') LIMIT 1").get(groupId)));
+      invariant(!claimed, 'ASSET_ACTIVE', 'asset or its atomic group is claimed or playing', 409);
+      const timestamp = now(); const revision = this.bumpRevision(timestamp);
+      const targets = new Map<string, Row>();
+      for (const cue of references.filter((item) => !item.group_id)) targets.set(String(cue.id), cue);
+      for (const groupId of groupIds) {
+        const children = this.db.prepare(`SELECT * FROM cues WHERE group_id=? AND state IN ('DRAFT','GENERATING','VALIDATING','READY')`).all(groupId) as Row[];
+        for (const child of children) targets.set(String(child.id), child);
+      }
+      for (const cue of targets.values()) {
+        this.db.prepare("UPDATE cues SET state='CANCELED',failure_code='ASSET_RETIRED',failure_detail='referenced music asset retired before playout',updated_at=? WHERE id=?").run(timestamp, cue.id);
+        this.event(String(cue.id), cue.group_id ? String(cue.group_id) : null, 'ASSET_RETIRED', String(cue.state), 'CANCELED', revision, 'admin', 'ASSET_RETIRED');
+      }
+      for (const groupId of groupIds) {
+        const group = this.db.prepare('SELECT state FROM cue_groups WHERE id=?').get(groupId) as { state: string } | undefined;
+        if (group && !['FAILED', 'CANCELED', 'COMPLETED'].includes(group.state)) {
+          this.db.prepare("UPDATE cue_groups SET state='CANCELED',failure_code='ASSET_RETIRED',updated_at=? WHERE id=?").run(timestamp, groupId);
+          this.event(null, groupId, 'GROUP_CANCELED', group.state, 'CANCELED', revision, 'admin', 'ASSET_RETIRED');
+        }
+      }
+      this.cancelOrphanGenerationsLocked(timestamp);
+      this.restoreUnqueuedHotlineCandidatesLocked(timestamp);
+      this.db.prepare("UPDATE assets SET status='RETIRED',retired_at=?,updated_at=? WHERE id=?").run(timestamp, timestamp, input.assetId);
+      this.assetEvent(input.assetId, 'RETIRED', 'READY', 'RETIRED', revision, timestamp);
+      return { accepted: true, asset_id: input.assetId, status: 'RETIRED', queue_revision: revision, canceled_cues: targets.size };
+    }))();
+  }
+
+  restoreMusicAsset(input: { assetId: string; expectedRevision: number; idempotencyKey: string }): Record<string, unknown> {
+    this.reconcile();
+    const replay = this.replayIdempotent<Record<string, unknown>>(`asset_restore:${input.assetId}`, input.idempotencyKey, input);
+    if (replay) return replay;
+    const preflight = this.db.prepare('SELECT * FROM assets WHERE id=?').get(input.assetId) as Row | undefined;
+    invariant(preflight, 'ASSET_NOT_FOUND', 'asset does not exist', 404);
+    invariant(preflight.kind === 'music', 'ASSET_KIND_MISMATCH', 'only music assets can be restored');
+    invariant(preflight.status === 'RETIRED', 'ASSET_STATE_CONFLICT', `cannot restore an asset in ${preflight.status} state`, 409);
+    const identity = this.validateRetiredAssetBytes(preflight);
+    return this.db.transaction(() => this.idempotent(`asset_restore:${input.assetId}`, input.idempotencyKey, input, () => {
+      this.assertRevision(input.expectedRevision);
+      const asset = this.db.prepare('SELECT * FROM assets WHERE id=?').get(input.assetId) as Row | undefined;
+      invariant(asset?.kind === 'music' && asset.status === 'RETIRED', 'ASSET_STATE_CONFLICT', 'asset is no longer RETIRED', 409);
+      this.assertRestoreIdentity(asset, identity);
+      const timestamp = now(); const revision = this.bumpRevision(timestamp);
+      this.db.prepare("UPDATE assets SET status='READY',retired_at=NULL,updated_at=? WHERE id=?").run(timestamp, input.assetId);
+      this.assetEvent(input.assetId, 'RESTORED', 'RETIRED', 'READY', revision, timestamp);
+      return { accepted: true, asset_id: input.assetId, status: 'READY', queue_revision: revision };
+    }))();
+  }
+
+  /** Hash and probe one identity-pinned byte stream. The source is opened once
+   * with O_NOFOLLOW, copied in bounded chunks while hashing, and ffprobe reads
+   * only the private copy through an inherited seekable descriptor. File and
+   * parent-directory identities/timestamps are checked before and after, so a
+   * pathname swap-then-restore cannot pass. */
+  private validateRetiredAssetBytes(asset: Row): RestoreIdentity {
+    const locator = this.safeLocator(String(asset.playout_locator), true);
+    invariant(locator === asset.playout_locator, 'INVALID_LOCATOR', 'asset locator canonical path changed', 409);
+    const parent = path.dirname(locator);
+    const sourceFd = fs.openSync(locator, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const directoryFd = fs.openSync(parent, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+    const tempDir = fs.mkdtempSync(path.join(path.dirname(this.config.databasePath), '.asset-restore-'));
+    fs.chmodSync(tempDir, 0o700);
+    const tempPath = path.join(tempDir, 'bytes.mp3');
+    let tempWriteFd: number | null = null;
+    let tempReadFd: number | null = null;
+    try {
+      const openedSource = fs.fstatSync(sourceFd, { bigint: true });
+      invariant(openedSource.isFile(), 'ASSET_FILE_MISSING', 'retired asset descriptor is not a regular file', 409);
+      const fileBefore = fileIdentity(openedSource);
+      const directoryBefore = directoryIdentity(fs.fstatSync(directoryFd, { bigint: true }));
+      invariant(fileBefore.size > 0n && fileBefore.size <= 1024n * 1024n * 1024n, 'ASSET_FILE_SIZE', 'retired asset size is outside the restore bound', 422);
+      this.assertNamedIdentity(locator, parent, fileBefore, directoryBefore);
+
+      tempWriteFd = fs.openSync(tempPath, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
+      const hash = crypto.createHash('sha256');
+      const buffer = Buffer.allocUnsafe(1024 * 1024);
+      let copied = 0n;
+      for (;;) {
+        const read = fs.readSync(sourceFd, buffer, 0, buffer.length, null);
+        if (read === 0) break;
+        copied += BigInt(read);
+        invariant(copied <= fileBefore.size, 'ASSET_CHANGED_DURING_VALIDATION', 'asset grew during restore validation', 409);
+        hash.update(buffer.subarray(0, read));
+        let offset = 0;
+        while (offset < read) offset += fs.writeSync(tempWriteFd, buffer, offset, read - offset);
+      }
+      invariant(copied === fileBefore.size, 'ASSET_CHANGED_DURING_VALIDATION', 'asset size changed during restore validation', 409);
+      fs.fsyncSync(tempWriteFd); fs.closeSync(tempWriteFd); tempWriteFd = null;
+      invariant(hash.digest('hex') === asset.content_sha256, 'CHECKSUM_MISMATCH', 'retired asset checksum no longer matches its bytes', 409);
+      this.assertOpenAndNamedIdentity(sourceFd, directoryFd, locator, parent, fileBefore, directoryBefore);
+
+      tempReadFd = fs.openSync(tempPath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      const openedCopy = fs.fstatSync(tempReadFd, { bigint: true });
+      invariant(openedCopy.isFile(), 'PROBE_FAILED', 'private restore copy is not a regular file', 422);
+      const tempBefore = fileIdentity(openedCopy);
+      invariant(tempBefore.size === fileBefore.size, 'ASSET_CHANGED_DURING_VALIDATION', 'private restore copy size mismatch', 409);
+      const result = spawnSync('ffprobe', ['-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', '-i', '/dev/fd/3'], {
+        encoding: 'utf8', timeout: 30_000, maxBuffer: 2_000_000, stdio: ['ignore', 'pipe', 'pipe', tempReadFd],
+      });
+      invariant(!result.error && result.status === 0, 'PROBE_FAILED', 'retired asset failed audio probing', 422);
+      invariant(sameFileIdentity(tempBefore, fileIdentity(fs.fstatSync(tempReadFd, { bigint: true }))), 'ASSET_CHANGED_DURING_VALIDATION', 'private restore copy changed during probe', 409);
+      let parsed: { format?: { duration?: string }; streams?: Array<Record<string, unknown>> };
+      try { parsed = JSON.parse(result.stdout); } catch { throw new DomainError('PROBE_FAILED', 'retired asset probe output is invalid', 422); }
+      const audio = parsed.streams?.find((stream) => stream.codec_type === 'audio');
+      const durationMs = Math.round(Number(parsed.format?.duration) * 1000);
+      invariant(audio?.codec_name === 'mp3' && Number.isFinite(durationMs) && durationMs > 0, 'PROBE_FAILED', 'retired asset is not decodable MP3 audio', 422);
+      invariant(Math.abs(durationMs - Number(asset.duration_ms)) <= 2000, 'PROBE_FAILED', 'retired asset duration no longer matches the catalog', 422);
+      this.assertOpenAndNamedIdentity(sourceFd, directoryFd, locator, parent, fileBefore, directoryBefore);
+      return { locator, parent, file: fileBefore, directory: directoryBefore };
+    } finally {
+      if (tempWriteFd !== null) fs.closeSync(tempWriteFd);
+      if (tempReadFd !== null) fs.closeSync(tempReadFd);
+      fs.closeSync(sourceFd); fs.closeSync(directoryFd);
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  }
+
+  private assertRestoreIdentity(asset: Row, expected: RestoreIdentity): void {
+    invariant(asset.playout_locator === expected.locator, 'ASSET_CHANGED_DURING_VALIDATION', 'asset locator changed before restore commit', 409);
+    const directoryFd = fs.openSync(expected.parent, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY | fs.constants.O_NOFOLLOW);
+    try {
+      const directory = directoryIdentity(fs.fstatSync(directoryFd, { bigint: true }));
+      this.assertNamedIdentity(expected.locator, expected.parent, expected.file, expected.directory);
+      invariant(sameDirectoryIdentity(directory, expected.directory), 'ASSET_CHANGED_DURING_VALIDATION', 'asset directory changed before restore commit', 409);
+    } finally { fs.closeSync(directoryFd); }
+  }
+
+  private assertOpenAndNamedIdentity(sourceFd: number, directoryFd: number, locator: string, parent: string, file: RestoreIdentity['file'], directory: RestoreIdentity['directory']): void {
+    invariant(sameFileIdentity(fileIdentity(fs.fstatSync(sourceFd, { bigint: true })), file), 'ASSET_CHANGED_DURING_VALIDATION', 'asset changed during restore validation', 409);
+    invariant(sameDirectoryIdentity(directoryIdentity(fs.fstatSync(directoryFd, { bigint: true })), directory), 'ASSET_CHANGED_DURING_VALIDATION', 'asset directory changed during restore validation', 409);
+    this.assertNamedIdentity(locator, parent, file, directory);
+  }
+
+  private assertNamedIdentity(locator: string, parent: string, file: RestoreIdentity['file'], directory: RestoreIdentity['directory']): void {
+    const named = fs.lstatSync(locator, { bigint: true });
+    const namedParent = fs.lstatSync(parent, { bigint: true });
+    invariant(!named.isSymbolicLink() && named.isFile() && sameFileIdentity(fileIdentity(named), file), 'ASSET_CHANGED_DURING_VALIDATION', 'asset pathname identity changed during restore validation', 409);
+    invariant(!namedParent.isSymbolicLink() && namedParent.isDirectory() && sameDirectoryIdentity(directoryIdentity(namedParent), directory), 'ASSET_CHANGED_DURING_VALIDATION', 'asset parent identity changed during restore validation', 409);
+    invariant(fs.realpathSync(locator) === locator, 'INVALID_LOCATOR', 'asset real path changed during restore validation', 409);
+  }
+
+  private assetEvent(assetId: string, eventType: 'RETIRED' | 'RESTORED', from: string, to: string, revision: number, timestamp: string): void {
+    this.db.prepare('INSERT INTO asset_events(asset_id,event_type,from_status,to_status,queue_revision,actor,created_at) VALUES(?,?,?,?,?,?,?)')
+      .run(assetId, eventType, from, to, revision, 'admin', timestamp);
+  }
+
   private activeQueueStats(): { count: number; durationMs: number } {
     const row = this.db.prepare(`SELECT count(*) count,coalesce(sum(planned_duration_ms),0) duration_ms FROM cues WHERE state IN ${ACTIVE_STATES}`).get() as { count: number; duration_ms: number };
     return { count: row.count, durationMs: row.duration_ms };
@@ -487,7 +718,7 @@ export class AutomationStore {
       const timestamp = now();
       const revision = this.bumpRevision(timestamp);
       const cueId = stableId('cue');
-      const transitionMs = Math.min(Math.max(input.transitionMs || this.config.crossfadeMs, 500), 5000);
+      const transitionMs = Math.min(Math.max(input.transitionMs || this.config.crossfadeMs, 500), 10_000);
       this.insertCue({ id: cueId, type: 'music', state: 'READY', asset, position: this.nextPosition(), source: input.source || 'manual', revision, timestamp, notBefore: input.notBefore, expiresAt: input.expiresAt, transitionMs });
       this.event(cueId, null, 'ENQUEUED', null, 'READY', revision, input.source || 'manual');
       return { accepted: true, queue_revision: revision, cue_id: cueId, state: 'READY' };
@@ -541,7 +772,7 @@ export class AutomationStore {
     return this.db.transaction(() => this.idempotent('enqueue_commentary', input.idempotencyKey, input, () => {
       this.assertRevision(input.expectedRevision);
       this.assertWindow(input);
-      const script = text(input.script, 'script', 2000) as string;
+      const script = this.normalizeSpeechScript(text(input.script, 'script', 2000) as string);
       invariant(script.split(/\s+/u).length <= 180, 'SCRIPT_TOO_LONG', 'commentary script exceeds 180 words');
       this.assertSpeechScriptSafe(script);
       if (input.source === 'dj_tool') invariant(this.tracksSinceCommentary() >= 3, 'COMMENTARY_TOO_SOON', 'DJ commentary requires at least three music tracks since commentary', 409);
@@ -750,11 +981,15 @@ export class AutomationStore {
       invariant(candidate.aired_at === null, 'CANDIDATE_ALREADY_AIRED', 'candidate has already aired', 409);
       const nextTrack = this.getReadyAsset(input.nextTrackAssetId, ['music']);
       this.repeatEligibility(nextTrack);
-      const intro = text(input.introScript, 'intro_script', 1200) as string;
-      const outro = input.outroScript ? text(input.outroScript, 'outro_script', 1200) as string : null;
+      const rawIntro = text(input.introScript, 'intro_script', 1200) as string;
+      const rawOutro = input.outroScript ? text(input.outroScript, 'outro_script', 1200) as string : null;
+      // Reject private/instruction-following text before interpreting the much
+      // narrower TTS direction-token grammar, preserving the privacy boundary.
+      this.assertSpeechScriptSafe(rawIntro);
+      if (rawOutro) this.assertSpeechScriptSafe(rawOutro);
+      const intro = this.normalizeSpeechScript(rawIntro);
+      const outro = rawOutro ? this.normalizeSpeechScript(rawOutro) : null;
       invariant(intro.split(/\s+/u).length <= 120 && (!outro || outro.split(/\s+/u).length <= 120), 'SCRIPT_TOO_LONG', 'hotline scripts may contain at most 120 words each');
-      this.assertSpeechScriptSafe(intro);
-      if (outro) this.assertSpeechScriptSafe(outro);
       if (input.source === 'dj_tool') invariant(this.tracksSinceCommentary() >= 3, 'COMMENTARY_TOO_SOON', 'DJ hotline commentary requires at least three music tracks since commentary', 409);
       const childCount = outro ? 4 : 3;
       const totalDuration = 60_000 + Number(candidate.duration_ms) + (outro ? 60_000 : 0) + Number(nextTrack.duration_ms);
@@ -812,6 +1047,15 @@ export class AutomationStore {
     const lowered = script.toLocaleLowerCase('en-US');
     const badword = this.config.speechBadwords.find((word) => new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegex(word)}([^\\p{L}\\p{N}]|$)`, 'iu').test(lowered));
     invariant(!badword, 'SCRIPT_BADWORD', 'script failed deterministic speech screening');
+  }
+
+  private normalizeSpeechScript(script: string): string {
+    try {
+      return normalizeTtsAuditText(script);
+    } catch (error) {
+      if (error instanceof TtsScriptMarkupError) throw new DomainError('SCRIPT_TTS_MARKUP_INVALID', error.message, 422);
+      throw error;
+    }
   }
 
   /** Marks a generated child ready and atomically admits all group children only when every generation is ready. */
@@ -915,9 +1159,14 @@ export class AutomationStore {
 
   history(limit = 50): { items: unknown[] } {
     this.reconcile();
-    const rows = this.db.prepare(`SELECT c.id,c.type,c.asset_id,c.completed_at,c.failure_code,a.title,a.artist,e.event_type,e.reason_code,e.created_at
-      FROM cue_events e LEFT JOIN cues c ON c.id=e.cue_id LEFT JOIN assets a ON a.id=c.asset_id ORDER BY e.id DESC LIMIT ?`).all(Math.min(Math.max(limit, 1), 200)) as Row[];
-    return { items: rows.map((r) => ({ cue_id: r.id, type: r.type, asset_id: r.asset_id, title: r.title, artist: r.artist, event: r.event_type, reason_code: r.reason_code, at: r.created_at })) };
+    const rows = this.db.prepare(`SELECT * FROM (
+      SELECT c.id cue_id,c.type,c.asset_id,a.title,a.artist,e.event_type event,e.reason_code,e.created_at at
+      FROM cue_events e LEFT JOIN cues c ON c.id=e.cue_id LEFT JOIN assets a ON a.id=c.asset_id
+      UNION ALL
+      SELECT NULL cue_id,'music' type,a.id asset_id,a.title,a.artist,e.event_type event,NULL reason_code,e.created_at at
+      FROM asset_events e JOIN assets a ON a.id=e.asset_id
+    ) ORDER BY at DESC LIMIT ?`).all(Math.min(Math.max(limit, 1), 200)) as Row[];
+    return { items: rows.map((r) => ({ cue_id: r.cue_id, type: r.type, asset_id: r.asset_id, title: r.title, artist: r.artist, event: r.event, reason_code: r.reason_code, at: r.at })) };
   }
 
   trackHistory(limit = 50): { items: unknown[] } {
@@ -1214,7 +1463,7 @@ export class AutomationStore {
       const start = utcDayStart();
       const used = (this.db.prepare("SELECT coalesce(sum(amount),0) used FROM usage_events WHERE kind='TTS_CHARACTERS' AND created_at>=?").get(start) as { used: number }).used;
       const retryAt = nextUtcDay();
-      if (used + characters > this.config.ttsDailyCharacterLimit) return { accepted: false, retryAt };
+      if (this.config.ttsDailyCharacterLimit > 0 && used + characters > this.config.ttsDailyCharacterLimit) return { accepted: false, retryAt };
       this.db.prepare("INSERT INTO usage_events(kind,amount,reference_id,created_at) VALUES('TTS_CHARACTERS',?,?,?)").run(characters, jobId, now());
       return { accepted: true, retryAt };
     })();
@@ -1267,7 +1516,9 @@ export class AutomationStore {
       const dayStart = utcDayStart();
       const toolCount = (this.db.prepare('SELECT count(*) count FROM dj_tool_audit WHERE created_at>=?').get(dayStart) as { count: number }).count;
       const modelTokens = (this.db.prepare("SELECT coalesce(sum(coalesce(input_tokens,0)+coalesce(output_tokens,0)),0) tokens FROM dj_runs WHERE started_at>=? AND state IN ('COMPLETED','FAILED','ABORTED','NOOP')").get(dayStart) as { tokens: number }).tokens;
-      if (toolCount >= this.config.djDailyToolLimit || modelTokens >= this.config.djDailyModelTokenLimit) {
+      const toolBudgetExhausted = this.config.djDailyToolLimit > 0 && toolCount >= this.config.djDailyToolLimit;
+      const modelBudgetExhausted = this.config.djDailyModelTokenLimit > 0 && modelTokens >= this.config.djDailyModelTokenLimit;
+      if (toolBudgetExhausted || modelBudgetExhausted) {
         this.db.prepare("UPDATE dj_state SET backoff_until=?,last_result='DAILY_BUDGET',updated_at=? WHERE singleton=1").run(nextUtcDay(), timestamp);
         return null;
       }
@@ -1317,7 +1568,7 @@ export class AutomationStore {
     invariant(run, 'DJ_SESSION_INVALID', 'DJ tool session has no active lease', 403);
     invariant(run.tool_calls < 50, 'DJ_TOOL_BUDGET', 'DJ run tool-call budget exhausted', 429);
     const daily = (this.db.prepare('SELECT count(*) count FROM dj_tool_audit WHERE created_at>=?').get(utcDayStart()) as { count: number }).count;
-    invariant(daily < this.config.djDailyToolLimit, 'DJ_DAILY_TOOL_BUDGET', 'daily DJ tool budget exhausted', 429);
+    if (this.config.djDailyToolLimit > 0) invariant(daily < this.config.djDailyToolLimit, 'DJ_DAILY_TOOL_BUDGET', 'daily DJ tool budget exhausted', 429);
     if (toolName === 'enqueue_hotline_group') {
       const count = (this.db.prepare("SELECT count(*) count FROM dj_tool_audit WHERE dj_run_id=? AND tool_name='enqueue_hotline_group' AND result_code='OK'").get(run.id) as { count: number }).count;
       invariant(count < 2, 'DJ_HOTLINE_BUDGET', 'DJ run hotline-group budget exhausted', 429);
@@ -1428,4 +1679,20 @@ function nextUtcDay(): string {
   const start = new Date(utcDayStart());
   start.setUTCDate(start.getUTCDate() + 1);
   return start.toISOString();
+}
+
+function fileIdentity(stat: fs.BigIntStats): RestoreIdentity['file'] {
+  return { dev: stat.dev, ino: stat.ino, size: stat.size, mtimeNs: stat.mtimeNs, ctimeNs: stat.ctimeNs };
+}
+
+function directoryIdentity(stat: fs.BigIntStats): RestoreIdentity['directory'] {
+  return { dev: stat.dev, ino: stat.ino, mtimeNs: stat.mtimeNs, ctimeNs: stat.ctimeNs };
+}
+
+function sameFileIdentity(a: RestoreIdentity['file'], b: RestoreIdentity['file']): boolean {
+  return a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
+}
+
+function sameDirectoryIdentity(a: RestoreIdentity['directory'], b: RestoreIdentity['directory']): boolean {
+  return a.dev === b.dev && a.ino === b.ino && a.mtimeNs === b.mtimeNs && a.ctimeNs === b.ctimeNs;
 }

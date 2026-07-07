@@ -177,12 +177,28 @@ described above) is the only restore path: it creates a reviewed new
 moderation version for unaired ARCHIVED calls. No implicit restore exists,
 and AIRED can never be restored.
 
-Simple UTC-day circuit breakers cap DJ tool calls/model tokens and TTS
+Authenticated asset-library controls may retire or restore immutable music by
+asset ID with queue-revision CAS and idempotency. Retire keeps bytes, blocks if
+the asset or an atomic-group sibling is claimed/playing, and cancels every
+unplayed reference/group transactionally. Restore rechecks realpath/symlinks,
+regular-file identity, SHA-256, and ffprobe duration before returning READY.
+Hashing streams from one `O_NOFOLLOW` descriptor into a bounded private copy;
+ffprobe consumes that exact copy through an inherited descriptor. File and
+parent-directory dev/inode/timestamps are pinned before/after, and final lstat
+identity is checked inside the commit transaction, so pathname swap-and-restore
+races fail closed.
+There is intentionally no asset delete control.
+
+Simple UTC-day circuit breakers can cap DJ tool calls/model tokens and TTS
 characters (`AUTOMATION_DJ_DAILY_TOOL_LIMIT`,
 `AUTOMATION_DJ_DAILY_MODEL_TOKEN_LIMIT`, and
-`AUTOMATION_TTS_DAILY_CHARACTER_LIMIT`). Exhaustion defers work/backoff to the
-next UTC day without touching current READY playout; these are operational
-guardrails, not a provider billing ledger.
+`AUTOMATION_TTS_DAILY_CHARACTER_LIMIT`). Set any one to `0` to disable that
+circuit breaker (the default); positive values enforce its cap. Negative,
+non-integer, and out-of-range values fail configuration loading. Accounting is
+still recorded while a breaker is disabled. Exhaustion defers work/backoff to
+the next UTC day without touching current READY playout; daily-budget deferrals
+are re-evaluated on automation restart, while provider/error backoff remains
+durable. These are operational guardrails, not a provider billing ledger.
 
 DJ completion accounting is fail-closed. The coordinator inspects every
 assistant message plus tool parts before deleting the dedicated session.
@@ -204,7 +220,24 @@ When playout is enabled, automation is the sole rerun owner. It imports the
 legacy played set once, preserves oldest-unaired/full-cycle rotation, pacing,
 admin queue, skip, and resume, and continuously writes
 `feed/rerun-state.automation-export.json` for rollback. The seven DJ tools
-cannot select reruns.
+cannot select reruns. Automatic rerun admission is a versioned durable SQLite
+setting, initialized ON by migration. The control room AUTO button changes it
+with optimistic concurrency and idempotency; OFF immediately blocks new filler
+and withdraws an unclaimed automatic rerun, but never interrupts a CLAIMED or
+PLAYING rerun. Explicit operator queue entries are clearly labeled as an OFF
+bypass. Re-enabling resumes the existing cycle and pacing timestamps without a
+reset. When automation playout is disabled, the same button controls the legacy
+bot `RerunManager`; an unreachable automation owner is shown as OFFLINE rather
+than silently falling back to legacy.
+
+Authenticated rerun control routes:
+
+- `GET /internal/rerun/state` includes `auto`, `control_version`, owner and
+  availability plus the safe queue/cycle projection.
+- `POST /internal/rerun/auto` requires `enabled`, `expected_version`, and
+  `idempotency_key`. A stale version returns `RERUN_VERSION_CONFLICT`.
+- Manual queue/unqueue retain their existing behavior and manual queue is the
+  deliberate operator override while AUTO is OFF.
 
 Presence starts UNKNOWN in SQLite and the bot. Claims remain blocked until
 Discord is ready, voice join succeeds, and initial membership is accepted;
@@ -228,6 +261,14 @@ claim the later production/integration gates are complete. Specifically:
 
 `AUTOMATION_DJ_FAKE_PROVIDER_ENABLED` is test-only, defaults false, and must
 never be enabled in production.
+
+Music-to-music transitions default to a stored 6000ms equal-power crossfade.
+The bot uses a one-shot local deadline roughly 250ms before the fade boundary
+to absorb claim/checksum/ffmpeg startup without increasing normal 1s polling or
+DB load. Existing queued 3000ms transition records remain authoritative and
+continue to play at 3s; changing the environment affects newly queued cues.
+`AUTOMATION_CROSSFADE_MS` is validated as 500–10000ms by automation and the
+bot; HTTP, DJ gateway, and custom OpenCode schemas enforce the same bounds.
 
 ## Bot dependency audit note
 

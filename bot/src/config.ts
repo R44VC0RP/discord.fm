@@ -21,7 +21,22 @@ function optionalNumber(name: string, fallback: number): number {
   return value;
 }
 
+function speechSpeed(name: string, ttsEnabled: boolean): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return 0.92;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0.7 || value > 1.2) {
+    // Hourly TTS is optional. A malformed tuning value must never prevent the
+    // radio bot from starting (nor reveal the configured value in logs).
+    console.warn(`[config] ${name} must be a number from 0.7 to 1.2; using 0.92${ttsEnabled ? '' : ' while hourly TTS is disabled'}`);
+    return 0.92;
+  }
+  return value;
+}
+
 export type RadioPreset = 'am' | 'clean';
+
+const hourlyTtsEnabled = Boolean(process.env.ELEVENLABS_API_KEY?.trim() && process.env.ELEVENLABS_VOICE_ID?.trim());
 
 export const config = {
   discord: {
@@ -116,6 +131,9 @@ export const config = {
     /** Hourly time checks air when both ElevenLabs values are set. */
     elevenLabsKey: optional('ELEVENLABS_API_KEY', ''),
     voiceId: optional('ELEVENLABS_VOICE_ID', ''),
+    /** Native ElevenLabs cadence control (official range: 0.7–1.2). */
+    speechSpeed: speechSpeed('ELEVENLABS_SPEECH_SPEED', hourlyTtsEnabled),
+    modelId: optional('ELEVENLABS_MODEL_ID', 'eleven_multilingual_v2'),
     /** Script LLM (opencode zen, Anthropic-compatible). Optional: plain time check without it. */
     zenKey: optional('ZEN_API_KEY', ''),
     zenModel: optional('ZEN_MODEL', 'claude-haiku-4-5'),
@@ -127,7 +145,9 @@ export const config = {
     internalUrl: optional('AUTOMATION_INTERNAL_URL', 'http://automation:8092'),
     internalToken: optional('AUTOMATION_INTERNAL_TOKEN', ''),
     /** Fixed equal-power music transition; server also constrains this policy. */
-    crossfadeMs: optionalNumber('AUTOMATION_CROSSFADE_MS', 3000),
+    crossfadeMs: optionalNumber('AUTOMATION_CROSSFADE_MS', 6000),
+    /** Fire claim/prebuffer slightly before the audible fade boundary. */
+    crossfadeLeadMs: optionalNumber('AUTOMATION_CROSSFADE_LEAD_MS', 250),
     generatedDir: optional('AUTOMATION_GENERATED_DIR', '/generated'),
   },
   feed: {

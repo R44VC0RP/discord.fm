@@ -17,6 +17,7 @@ import type { PresenceSnapshot } from './feed.js';
 import type { ListenerBreakdown } from './listeners.js';
 import type { Mixer } from './mixer.js';
 import { CityDeck, fetchWeather } from './weather.js';
+import { prepareElevenLabsTts } from './tts.js';
 
 interface AnnouncerDeps {
   mixer: Mixer;
@@ -36,7 +37,9 @@ Every ident MUST:
 - mention that the station is on X, YouTube, and anomaly.fm (weave it in naturally, vary the phrasing)
 - include the catchphrase exactly once: "where the anomaly here is only YOU" (lean into the YOU)
 
-Every hour must feel DIFFERENT: vary the sentence order, openings, and phrasing. Follow the "tone for this hour" given by the user, and include one small moment of personality that fits it - a dry joke, a strange aside, a made-up micro-bulletin from inside the anomaly, radio-nerd trivia, or a warm word to whoever is still awake. Never reuse stock phrasing beyond the required catchphrase. If extra details are provided, weave in AT MOST ONE of them naturally.`;
+Every hour must feel DIFFERENT: vary the sentence order, openings, and phrasing. Follow the "tone for this hour" given by the user, and include one small moment of personality that fits it - a dry joke, a strange aside, a made-up micro-bulletin from inside the anomaly, radio-nerd trivia, or a warm word to whoever is still awake. Never reuse stock phrasing beyond the required catchphrase. If extra details are provided, weave in AT MOST ONE of them naturally.
+
+For delivery, you may use [pause], [long pause], or [sigh] sparingly (at most six total, and at most two long pauses). Use no other bracketed or XML/SSML-style tags.`;
 
 /** One is rolled each hour so consecutive idents never share a mood. */
 const FLAVORS = [
@@ -186,7 +189,9 @@ export class Announcer {
       const data = (await res.json()) as { content?: { type: string; text?: string }[] };
       const text = data.content?.find((c) => c.type === 'text')?.text?.trim().replace(/\s+/g, ' ');
       if (!text) throw new Error('zen returned no text');
-      return text.slice(0, 500);
+      // Strip accidental LLM markup before it can become either an audit line
+      // or provider input. The allowed directions remain human-readable.
+      return prepareElevenLabsTts(text.slice(0, 500), config.announcer.modelId, 'strip').auditText;
     } catch (error) {
       console.warn('[announcer] llm failed, using plain time check:', error instanceof Error ? error.message : error);
       return fallback;
@@ -194,14 +199,15 @@ export class Announcer {
   }
 
   async speak(text: string): Promise<Buffer> {
-    const { elevenLabsKey, voiceId } = config.announcer;
+    const { elevenLabsKey, voiceId, modelId, speechSpeed } = config.announcer;
+    const tts = prepareElevenLabsTts(text, modelId);
     const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
       method: 'POST',
       headers: { 'xi-api-key': elevenLabsKey, 'content-type': 'application/json' },
       body: JSON.stringify({
-        text,
-        model_id: 'eleven_multilingual_v2',
-        voice_settings: { stability: 0.5, similarity_boost: 0.75 },
+        text: tts.requestText,
+        model_id: modelId,
+        voice_settings: { stability: 0.5, similarity_boost: 0.75, speed: speechSpeed },
       }),
       signal: AbortSignal.timeout(30_000),
     });

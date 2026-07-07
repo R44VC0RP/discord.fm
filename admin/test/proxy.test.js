@@ -99,6 +99,71 @@ test('browser responses are rebuilt from field allowlists: no worker/lease/run/i
   assert.deepEqual(JSON.parse(trackBody), { accepted: true, queue_revision: 8, state: 'READY' });
 });
 
+test('asset retire/restore use fixed proxy routes, preserve status, and strip private fields', async () => {
+  const id = 'ast_' + 'a'.repeat(32);
+  for (const action of ['retire', 'restore']) {
+    fake.calls.length = 0;
+    const res = await fetch(`${admin.origin}/api/automation/assets/${id}/${action}`, {
+      method: 'POST', headers: { 'content-type': 'application/json', origin: admin.origin },
+      body: JSON.stringify({ expected_queue_revision: 7, idempotency_key: `asset:${action}` }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.deepEqual(body, { accepted: true, asset_id: id, status: action === 'retire' ? 'RETIRED' : 'READY', queue_revision: 8, canceled_cues: action === 'retire' ? 2 : 0 });
+    const call = fake.calls.at(-1);
+    assert.equal(call.path, `/internal/admin/catalog/assets/${id}/${action}`);
+    assert.equal(call.headers.authorization, `Bearer ${TOKEN}`);
+    assert.deepEqual(JSON.parse(call.body), { expected_queue_revision: 7, idempotency_key: `asset:${action}` });
+  }
+
+  const key = `POST /internal/admin/catalog/assets/${id}/retire`;
+  fake.override(key, (call, res) => fake.json(res, 409, { error: { code: 'ASSET_ACTIVE', message: 'SECRET /music/private.mp3' } }));
+  try {
+    const blocked = await fetch(`${admin.origin}/api/automation/assets/${id}/retire`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ expected_queue_revision: 8, idempotency_key: 'blocked' }),
+    });
+    assert.equal(blocked.status, 409);
+    assert.deepEqual(await blocked.json(), { error: { code: 'ASSET_ACTIVE', message: 'the asset or its atomic queue group is claimed or playing' } });
+  } finally { fake.clearOverride(key); }
+
+  fake.calls.length = 0;
+  const malformed = await fetch(`${admin.origin}/api/automation/assets/ast_..%2Fsecret/retire`, { method: 'POST', body: '{}' });
+  assert.equal(malformed.status, 404); assert.equal(fake.calls.length, 0);
+});
+
+test('asset UI exposes confirmed keyboard buttons without delete controls or unsafe interpolation', () => {
+  const ui = fs.readFileSync(path.join(__dirname, '..', 'ui.html'), 'utf8');
+  assert.match(ui, /data-assetact="retire"/u); assert.match(ui, /data-assetact="restore"/u);
+  assert.match(ui, /The audio bytes will be retained/u); assert.match(ui, /queued but unplayed cue/u);
+  assert.match(ui, /path safety, checksum, and decodability/u);
+  assert.match(ui, /aria-label="archive/u); assert.match(ui, /aria-label="restore/u);
+  assert.match(ui, /escAttr\(a\.title \|\| a\.asset_id\)/u);
+  assert.doesNotMatch(ui, /data-assetact="delete"|\/assets\/.*\/delete/u);
+});
+
+test('rerun UI labels automation versus legacy ownership and sends versioned idempotent toggles', () => {
+  const ui = fs.readFileSync(path.join(__dirname, '..', 'ui.html'), 'utf8');
+  assert.match(ui, /automationReruns \? 'AUTOMATION' : 'LEGACY'/u);
+  assert.match(ui, /body\.expected_version = rerun\.control_version/u);
+  assert.match(ui, /body\.idempotency_key = 'rerun-auto:' \+ crypto\.randomUUID\(\)/u);
+  assert.match(ui, /explicit operator queue still bypasses OFF/u);
+  assert.match(ui, /aria-pressed/u);
+  assert.match(ui, /rerunAvailable \|\| !rerun\.playing/u);
+});
+
+test('rerun browser projection keeps only bounded control fields', () => {
+  const projected = admin.module.projectRerun({
+    owner: 'automation', available: true, auto: false, control_version: 4, manual_bypasses_auto: true,
+    playing: 'session-2026-01-01T00-00-00.mp3', position: 12,
+    queue: ['session-2026-01-02T00-00-00.mp3', '../SECRET.mp3'],
+    nextUp: 'session-2026-01-02T00-00-00.mp3', waitSeconds: 30, cycle: { played: 1, total: 2 },
+    worker_id: 'SECRET', claim_token: 'SECRET', locator: '/recordings/SECRET', nested: { secret: 'SECRET' },
+  });
+  assert.deepEqual(projected.queue, ['session-2026-01-02T00-00-00.mp3']);
+  assert.equal(projected.owner, 'automation'); assert.equal(projected.control_version, 4);
+  assert.doesNotMatch(JSON.stringify(projected), /SECRET|worker|claim|locator/u);
+});
+
 test('DJ successful projection recursively strips poisoned provider errors, diagnostics, paths, tokens, and run details', async () => {
   const poison = 'Bearer SECRET_TOKEN /private/provider/body opencode_session_SECRET';
   fake.override('GET /internal/dj/status', (call, res) => fake.json(res, 200, {
@@ -132,6 +197,24 @@ test('DJ successful projection recursively strips poisoned provider errors, diag
     assert.equal(body.lease.last_result, null);
     assert.deepEqual(body.tools, ['list_tracks']);
     assert.equal(Object.hasOwn(body, 'model'), false);
+  } finally {
+    fake.clearOverride('GET /internal/dj/status');
+  }
+});
+
+test('DJ safe status labels zero daily limits as unlimited', async () => {
+  fake.override('GET /internal/dj/status', (call, res) => fake.json(res, 200, {
+    mode: 'LIVE', flags: { dj_enabled: true }, lease: {}, last_run: null,
+    daily: { tool_calls: 7, tool_call_limit: 0, model_tokens: 12345, model_token_limit: 0, tts_characters: 456, tts_character_limit: 0 },
+    watermarks: {}, tools: [], opencode: { healthy: true, version: '1.17.13' },
+  }));
+  try {
+    const body = await (await fetch(admin.origin + '/api/automation/dj')).json();
+    assert.deepEqual(body.daily, {
+      tool_calls: 7, tool_call_limit: 'unlimited',
+      model_tokens: 12345, model_token_limit: 'unlimited',
+      tts_characters: 456, tts_character_limit: 'unlimited',
+    });
   } finally {
     fake.clearOverride('GET /internal/dj/status');
   }
@@ -322,6 +405,10 @@ test('uploads above the size cap are rejected and leave no bytes behind', async 
   if (res) assert.equal(res.status, 413);
   assert.deepEqual(fs.readdirSync(ORIGINALS()).filter((f) => f.endsWith('.mp3')), before);
   assert.deepEqual(fs.readdirSync(STAGING()), []);
+  // The deliberate mid-upload socket destroy can complete just after fetch()
+  // rejects on macOS. Let the server finish closing that connection before the
+  // next Range-proxy test reuses the local HTTP pool.
+  await new Promise((resolve) => setTimeout(resolve, 50));
 });
 
 test('empty uploads are rejected', async () => {

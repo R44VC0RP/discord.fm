@@ -144,7 +144,7 @@
   <section>
     <h2>RERUN QUEUE</h2>
     <div class="row-flex" style="margin-bottom:10px">
-      <button id="autoBtn">AUTO: ?</button>
+      <button id="autoBtn" aria-pressed="false">AUTO: ?</button>
       <button id="skipBtn">SKIP CURRENT</button>
       <span class="muted" id="pausedInfo"></span>
     </div>
@@ -307,7 +307,10 @@
   const api = async (path, options) => {
     const res = await fetch(path, options);
     const body = await res.json().catch(() => ({}));
-    if (!res.ok) { toast(body.error || ('error ' + res.status)); throw new Error(body.error || res.status); }
+    if (!res.ok) {
+      const message = typeof body.error === 'string' ? body.error : (body.error && body.error.message) || ('error ' + res.status);
+      toast(message); throw new Error(message);
+    }
     return body;
   };
 
@@ -359,7 +362,7 @@
     if (!state) return;
     const bot = state.bot || {};
     const snap = bot.snapshot || {};
-    const rerun = bot.rerun || { queue: [], auto: false };
+    const rerun = bot.rerun || { queue: [], auto: null, available: false, owner: 'legacy' };
     const skin = bot.skin || {
       mode: 'daily', active: null, daily: null, available: [],
       control: { available: false, message: 'Skin manager unavailable.' },
@@ -380,15 +383,23 @@
       + ' (web ' + (L.web ?? '?') + ' \u00b7 youtube ' + (L.youtube ?? '\u2013') + ')';
 
     // rerun
-    $('autoBtn').textContent = '\u{1F501} AUTO: ' + (rerun.auto ? 'ON' : 'OFF');
+    const automationReruns = rerun.owner === 'automation';
+    const rerunAvailable = rerun.available !== false;
+    $('autoBtn').textContent = '\u{1F501} ' + (automationReruns ? 'AUTOMATION' : 'LEGACY') + ' AUTO: '
+      + (!rerunAvailable ? 'OFFLINE' : rerun.auto ? 'ON' : 'OFF');
+    $('autoBtn').disabled = !rerunAvailable;
+    $('autoBtn').setAttribute('aria-pressed', rerun.auto === true ? 'true' : 'false');
     $('skipBtn').textContent = '\u23ED\uFE0F SKIP CURRENT';
+    $('skipBtn').disabled = !rerunAvailable || !rerun.playing;
     $('uploadBtn').textContent = '\u2B06\uFE0F UPLOAD TRACK';
     const bits = [];
     if (rerun.paused) bits.push('paused: ' + fmtSession(rerun.paused.file) + ' @ ' + fmtDur(rerun.paused.offset));
     if (rerun.nextUp) bits.push('next: ' + fmtSession(rerun.nextUp) + (rerun.waitSeconds > 0 ? ' in ' + Math.ceil(rerun.waitSeconds / 60) + 'm' : ' (due)'));
     if (rerun.cycle && rerun.cycle.total) bits.push('cycle: ' + rerun.cycle.played + '/' + rerun.cycle.total + ' aired');
+    if (!rerunAvailable) bits.push('automation rerun controls offline');
+    else if (automationReruns && !rerun.auto) bits.push('automatic filler held; an explicit operator queue still bypasses OFF');
     $('pausedInfo').textContent = bits.join(' \u00b7 ');
-    $('queueTable').querySelector('tbody').innerHTML = rerun.queue.length
+    $('queueTable').querySelector('tbody').innerHTML = (rerun.queue || []).length
       ? rerun.queue.map((f, i) =>
           '<tr><td>' + (i + 1) + '. ' + esc(fmtSession(f)) + '</td><td style="text-align:right"><button data-unqueue="' + i + '" title="remove from queue">\u2796 REMOVE</button></td></tr>').join('')
       : '<tr><td class="muted">queue empty' + (rerun.auto ? ' \u2014 rotation plays the oldest unaired session' : '') + '</td></tr>';
@@ -679,11 +690,16 @@
             + '<td class="muted">' + esc((a.tags || []).join(', ') || '\u2014') + '</td>'
             + '<td>' + fmtMs(a.duration_ms) + '</td><td>' + (ASSET_BADGE[a.status] || esc(a.status)) + '</td>'
             + '<td style="text-align:right;white-space:nowrap">'
-            + (a.status === 'READY' && a.kind === 'music'
-                ? prevBtn('/api/automation/assets/' + encodeURIComponent(a.asset_id) + '/audio', 'library \u00b7 ' + (a.title || a.asset_id))
-                  + '<button data-aqtrack="' + escAttr(a.asset_id) + '" data-aqtitle="' + escAttr(a.title || '') + '" title="append to the AI queue">\u2795 QUEUE</button>'
-                : '')
-            + '</td></tr>').join('')
+             + (a.status === 'READY' && a.kind === 'music'
+                 ? prevBtn('/api/automation/assets/' + encodeURIComponent(a.asset_id) + '/audio', 'library \u00b7 ' + (a.title || a.asset_id))
+                   + '<button data-aqtrack="' + escAttr(a.asset_id) + '" data-aqtitle="' + escAttr(a.title || '') + '" title="append to the AI queue">\u2795 QUEUE</button>'
+                 : '')
+             + (a.kind === 'music' && a.status === 'READY'
+                 ? '<button class="danger" data-assetact="retire" data-assetid="' + escAttr(a.asset_id) + '" data-assettitle="' + escAttr(a.title || a.asset_id) + '" aria-label="archive ' + escAttr(a.title || a.asset_id) + '" title="archive this asset without deleting its audio">\u{1F5C4}\uFE0F ARCHIVE</button>'
+                 : a.kind === 'music' && a.status === 'RETIRED'
+                   ? '<button data-assetact="restore" data-assetid="' + escAttr(a.asset_id) + '" data-assettitle="' + escAttr(a.title || a.asset_id) + '" aria-label="restore ' + escAttr(a.title || a.asset_id) + '" title="revalidate retained audio and restore this asset">\u21A9\uFE0F RESTORE</button>'
+                   : '')
+             + '</td></tr>').join('')
         : '<tr><td class="muted" colspan="6">no assets</td></tr>';
       updatePreviewButtons();
     });
@@ -784,6 +800,30 @@
     await autoTick();
   }
 
+  async function changeAssetLifecycle(action, assetId, title) {
+    if (!auto.queue) { toast('queue not loaded yet'); return; }
+    const label = title || assetId;
+    const message = action === 'retire'
+      ? 'ARCHIVE “' + label + '”? The audio bytes will be retained. Every queued but unplayed cue that references it will be canceled atomically; a claimed or playing cue will block this action.'
+      : 'RESTORE “' + label + '”? The retained audio will be rechecked for path safety, checksum, and decodability before it becomes READY again.';
+    if (!confirm(message)) return;
+    try {
+      const result = await autoApi('/api/automation/assets/' + encodeURIComponent(assetId) + '/' + action, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ expected_queue_revision: auto.queue.queue_revision, idempotency_key: newIdem() }),
+      });
+      auto.queue.queue_revision = result.queue_revision;
+      toast(action === 'retire'
+        ? '\u{1F5C4}\uFE0F archived ' + label + ' \u00b7 retained bytes \u00b7 canceled ' + (result.canceled_cues || 0) + ' queued cues'
+        : '\u2705 restored ' + label + ' to READY');
+    } catch (err) {
+      if (err.code === 'REVISION_CONFLICT') toast('queue changed underneath you \u2014 refreshed; confirm again to retry');
+    }
+    await autoTick();
+    await loadLibrary(true);
+  }
+
   async function addCommentary() {
     const script = $('aqScript').value.trim();
     if (!script) { toast('write a commentary script first'); $('aqScript').focus(); return; }
@@ -861,6 +901,7 @@
     const d = b.dataset;
     if (d.prev) { openPreview(d.prev, d.title); return; }
     if (d.aqtrack) { void enqueueTrack(d.aqtrack, d.aqtitle); return; }
+    if (d.assetact) { void changeAssetLifecycle(d.assetact, d.assetid, d.assettitle); return; }
     if (d.hlact) { void reviewHotline(d.hlact, d.hlid, d.hlver); return; }
     if (b.id === 'aqRefreshBtn') { void autoTick(); return; }
     if (b.id === 'aqCommentBtn') { void addCommentary(); return; }
@@ -881,7 +922,15 @@
     }
     if (b.id === 'skinAutoBtn') { await api('/api/skin', { method: 'POST', body: JSON.stringify({ mode: 'daily' }) }); toast('daily skin rotation restored'); }
     else if (d.skinactivate) { await api('/api/skin', { method: 'POST', body: JSON.stringify({ mode: 'manual', skin: d.skinactivate }) }); toast('skin activated and pinned'); }
-    else if (b.id === 'autoBtn') await api('/api/rerun/auto', { method: 'POST', body: JSON.stringify({ enabled: !(state.bot.rerun || {}).auto }) });
+    else if (b.id === 'autoBtn') {
+      const rerun = (state.bot && state.bot.rerun) || {};
+      const body = { enabled: !rerun.auto };
+      if (rerun.owner === 'automation') {
+        body.expected_version = rerun.control_version;
+        body.idempotency_key = 'rerun-auto:' + crypto.randomUUID();
+      }
+      await api('/api/rerun/auto', { method: 'POST', body: JSON.stringify(body) });
+    }
     else if (b.id === 'skipBtn') await api('/api/rerun/skip', { method: 'POST' });
     else if (d.mp4) { requestMp4(d.mp4); return; }
     else if (d.cue) { await api('/api/rerun/queue', { method: 'POST', body: JSON.stringify({ file: d.cue }) }); toast('cued ' + fmtSession(d.cue)); }

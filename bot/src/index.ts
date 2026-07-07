@@ -112,7 +112,8 @@ if (config.automation.playoutEnabled) {
       url: config.automation.internalUrl,
       token: config.automation.internalToken,
       assetRoots: [config.music.dir, config.automation.generatedDir, config.rerun.recordingsDir, config.voicemail.dir],
-      crossfadeMs: Math.min(5000, Math.max(500, config.automation.crossfadeMs)),
+      crossfadeMs: Math.min(10_000, Math.max(500, config.automation.crossfadeMs)),
+      crossfadeLeadMs: Math.min(1000, Math.max(0, config.automation.crossfadeLeadMs)),
       onStateChange: () => { void feed.update(currentSnapshot()); void updateVoiceStatus(); },
     });
   }
@@ -297,11 +298,14 @@ const audience = new AudienceLog(config.feed.dir || '/tmp', fetchAllListeners, c
 if (config.feed.dir) void audience.start();
 
 const rerunControl = playout ? {
-  state: () => playout!.rerunState(),
+  state: async () => {
+    try { return await playout!.rerunState(); }
+    catch { return { queue: [], auto: null, playing: null, owner: 'automation', available: false }; }
+  },
   enqueue: (file: string) => playout!.queueRerun(file),
   unqueue: (index: number) => playout!.unqueueRerun(index),
   skip: () => playout!.skipRerun(),
-  setAuto: (enabled: boolean) => playout!.setRerunAuto(enabled),
+  setAuto: (enabled: boolean, expectedVersion?: number, idempotencyKey?: string) => playout!.setRerunAuto(enabled, expectedVersion!, idempotencyKey!),
 } : rerun!;
 
 startApi({
@@ -315,6 +319,7 @@ startApi({
   setMusicTrack,
   queueVoicemail,
   automationOwnsSpoken: Boolean(playout),
+  rerunOwner: playout ? 'automation' : 'legacy',
   getVoicemailQueue: () => [...voicemailQueue],
   voicemailReceived: announceVoicemail,
   announce: (force) =>

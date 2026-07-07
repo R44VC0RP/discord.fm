@@ -67,7 +67,11 @@ export class RerunScheduler {
   async state(): Promise<Record<string, unknown>> { const files = await this.files(); return this.store.rerunControlSnapshot(files); }
   async queue(file: string): Promise<Record<string, unknown>> { this.store.queueRerun(file); await this.tick(); return this.state(); }
   async unqueue(index: number): Promise<Record<string, unknown>> { this.store.unqueueRerun(index); return this.state(); }
-  async setAuto(enabled: boolean): Promise<Record<string, unknown>> { this.store.setRerunAuto(enabled); await this.tick(); return this.state(); }
+  async setAuto(enabled: boolean, expectedVersion: number, idempotencyKey: string): Promise<Record<string, unknown>> {
+    const mutation = this.store.setRerunAuto({ enabled, expectedVersion, idempotencyKey });
+    await this.tick();
+    return { ...(await this.state()), mutation };
+  }
 
   private async files(): Promise<string[]> {
     try { return (await fsp.readdir(this.config.recordingsDir)).filter((name) => /^session-[\w.-]+\.mp3$/u.test(name)).sort(); }

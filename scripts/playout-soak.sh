@@ -11,7 +11,7 @@ while :; do
   [ $((NOW-START)) -ge "$DURATION" ] && break
   ITERATION=$((ITERATION+1))
   printf 'playout soak iteration %s (elapsed %ss)\n' "$ITERATION" "$((NOW-START))"
-  if OUTPUT=$(cd "$ROOT/bot" && node --import tsx --test --test-name-pattern='station ident smoothly|live-human master duck|station overlay admission|legacy rerun announcement|real A-B-C decoder lifecycle|DJ enqueue racing a deterministic rerun|dropped committed claim|restart after unrecoverable claim|claim ambiguity deadline|transient complete failure' test/program.test.ts 2>&1); then
+  if OUTPUT=$(cd "$ROOT/bot" && node --import tsx --test --test-name-pattern='station ident smoothly|live-human master duck|station overlay admission|legacy rerun announcement|90,044ms|one-shot crossfade|stored 3s|real A-B-C decoder lifecycle|real automation \+ ffmpeg|DJ enqueue racing a deterministic rerun|dropped committed claim|restart after unrecoverable claim|claim ambiguity deadline|transient complete failure' test/program.test.ts 2>&1); then
     printf '%s\n' "$OUTPUT"
   else
     printf '%s\n' "$OUTPUT"

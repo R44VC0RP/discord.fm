@@ -42,7 +42,7 @@ export function fakeDjCompletion(value: unknown): Record<string, unknown> {
   if (Number(queue.ready_count ?? 0) < high) {
     const used = new Set(cues.map((cue) => cue.asset_id));
     const track = tracks.find((item) => item.asset_id && !used.has(item.asset_id));
-    if (track?.asset_id) return call('enqueue_track', { asset_id: track.asset_id, expected_queue_revision: revision, idempotency_key: `fake:track:${revision}`, transition: { kind: 'crossfade', duration_ms: 3000 } });
+    if (track?.asset_id) return call('enqueue_track', { asset_id: track.asset_id, expected_queue_revision: revision, idempotency_key: `fake:track:${revision}`, transition: { kind: 'crossfade', duration_ms: 6000 } });
   }
   return response(body.model, { role: 'assistant', content: 'Queue refill complete; durable station policy accepted the programming.' }, 'stop');
 }

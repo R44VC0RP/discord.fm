@@ -24,12 +24,12 @@ function config(root: string, overrides: Partial<AutomationConfig> = {}): Automa
     bind: '127.0.0.1', port: 8092, internalToken: 'test-token', allowUnauthenticated: false, maxBodyBytes: 65_536,
     claimLeaseMs: 30_000, maxQueueCues: 100, maxHorizonMs: 7_200_000, lowCueCount: 12, highCueCount: 24,
     lowHorizonMs: 2_700_000, targetHorizonMs: 5_400_000, assetRepeatMs: 21_600_000, artistRepeatMs: 7_200_000,
-    crossfadeMs: 3000, badwords: ['forbidden phrase'], hotlineEnabled: true, playoutEnabled: true, djEnabled: false, djShadow: false, aiArchiveEnabled: false,
-    generationEnabled: false, hotlineImportEnabled: false, speechBadwords: ['speech-blocked'], elevenLabsKey: '', elevenLabsVoiceId: '', elevenLabsModelId: 'eleven_multilingual_v2', elevenLabsBaseUrl: 'https://api.elevenlabs.io',
+    crossfadeMs: 6000, badwords: ['forbidden phrase'], hotlineEnabled: true, playoutEnabled: true, djEnabled: false, djShadow: false, aiArchiveEnabled: false,
+    generationEnabled: false, hotlineImportEnabled: false, speechBadwords: ['speech-blocked'], elevenLabsKey: '', elevenLabsVoiceId: '', elevenLabsModelId: 'eleven_multilingual_v2', elevenLabsSpeechSpeed: 0.92, elevenLabsBaseUrl: 'https://api.elevenlabs.io',
     generationPollMs: 2000, generationLeaseMs: 120_000, generatedMaxBytes: 10_000_000, generatedBudgetBytes: 2_147_483_648,
     opencodeUrl: 'http://127.0.0.1:4096', opencodeUsername: 'opencode', opencodePassword: 'test-password', djModel: 'opencode/test', djToolToken: 'dj-tool-token-0123456789abcdef012345', djPollMs: 15_000, djTimeoutMs: 60_000, djLeaseMs: 120_000, djCooldownMs: 300_000,
     djDailyToolLimit: 200, djDailyModelTokenLimit: 200_000, ttsDailyCharacterLimit: 20_000,
-    feedDir: path.join(root, 'feed'), rerunAuto: true, rerunAfterLiveMs: 35 * 60_000, rerunGapMs: 35 * 60_000, rerunPollMs: 1000,
+    feedDir: path.join(root, 'feed'), rerunAfterLiveMs: 35 * 60_000, rerunGapMs: 35 * 60_000, rerunPollMs: 1000,
     djFakeProviderEnabled: false,
     stationTimeZone: 'America/New_York',
     ...overrides,
@@ -59,7 +59,7 @@ test('migrations are versioned and queue survives a restart', async () => {
   const { root, store } = await fixture();
   const music = asset(store, 'persistent');
   store.enqueueTrack({ assetId: music, expectedRevision: 0, idempotencyKey: 'persist:1' });
-  assert.equal(store.ready().migrationVersion, 7);
+  assert.equal(store.ready().migrationVersion, 9);
   store.close();
   const restarted = new AutomationStore(config(root));
   assert.equal(restarted.revision(), 1);
@@ -418,6 +418,7 @@ test('all automation behavior flags default literally false', () => {
     for (const name of names) delete process.env[name];
     const defaults = loadConfig();
     assert.deepEqual([defaults.playoutEnabled, defaults.djEnabled, defaults.djShadow, defaults.hotlineEnabled, defaults.hotlineImportEnabled, defaults.generationEnabled, defaults.aiArchiveEnabled, defaults.djFakeProviderEnabled], [false, false, false, false, false, false, false, false]);
+    assert.equal(defaults.crossfadeMs, 6000);
   } finally {
     for (const name of names) {
       const value = saved.get(name);
@@ -430,4 +431,79 @@ test('all automation behavior flags default literally false', () => {
     assert.ok(compose.includes(`${name}: \${${name}:-false}`));
     assert.match(example, new RegExp(`^${name}=false(?:\\s|$)`, 'mu'));
   }
+  assert.match(compose, /AUTOMATION_CROSSFADE_MS: \$\{AUTOMATION_CROSSFADE_MS:-6000\}/u);
+  assert.match(example, /^AUTOMATION_CROSSFADE_MS=6000$/mu);
+});
+
+test('daily budget configuration defaults to unlimited, accepts zero, and rejects invalid limits', () => {
+  const names = ['AUTOMATION_DJ_DAILY_TOOL_LIMIT', 'AUTOMATION_DJ_DAILY_MODEL_TOKEN_LIMIT', 'AUTOMATION_TTS_DAILY_CHARACTER_LIMIT'] as const;
+  const saved = new Map(names.map((name) => [name, process.env[name]]));
+  try {
+    for (const name of names) delete process.env[name];
+    const defaults = loadConfig();
+    assert.deepEqual([defaults.djDailyToolLimit, defaults.djDailyModelTokenLimit, defaults.ttsDailyCharacterLimit], [0, 0, 0]);
+    for (const name of names) process.env[name] = '0';
+    const zero = loadConfig();
+    assert.deepEqual([zero.djDailyToolLimit, zero.djDailyModelTokenLimit, zero.ttsDailyCharacterLimit], [0, 0, 0]);
+    for (const name of names) {
+      process.env[name] = '-1';
+      assert.throws(loadConfig, new RegExp(`${name} must be an integer from 0`, 'u'));
+      process.env[name] = 'not-a-number';
+      assert.throws(loadConfig, new RegExp(`${name} must be an integer from 0`, 'u'));
+      process.env[name] = '0';
+    }
+  } finally {
+    for (const name of names) {
+      const value = saved.get(name);
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+  }
+});
+
+test('optional TTS speed never blocks disabled generation and defaults safely when invalid', () => {
+  const names = ['AUTOMATION_GENERATION_ENABLED', 'ELEVENLABS_API_KEY', 'ELEVENLABS_VOICE_ID', 'ELEVENLABS_SPEECH_SPEED'] as const;
+  const saved = new Map(names.map((name) => [name, process.env[name]]));
+  try {
+    for (const name of names) delete process.env[name];
+    process.env.ELEVENLABS_SPEECH_SPEED = 'invalid-speed';
+    const disabled = loadConfig();
+    assert.equal(disabled.generationEnabled, false);
+    assert.equal(disabled.elevenLabsSpeechSpeed, 0.92);
+
+    process.env.AUTOMATION_GENERATION_ENABLED = 'true';
+    process.env.ELEVENLABS_API_KEY = 'test-key';
+    process.env.ELEVENLABS_VOICE_ID = 'test-voice';
+    const enabledInvalid = loadConfig();
+    assert.equal(enabledInvalid.elevenLabsSpeechSpeed, 0.92);
+    process.env.ELEVENLABS_SPEECH_SPEED = '0.7';
+    assert.equal(loadConfig().elevenLabsSpeechSpeed, 0.7);
+    process.env.ELEVENLABS_SPEECH_SPEED = '1.2';
+    assert.equal(loadConfig().elevenLabsSpeechSpeed, 1.2);
+    delete process.env.ELEVENLABS_SPEECH_SPEED;
+    assert.equal(loadConfig().elevenLabsSpeechSpeed, 0.92);
+  } finally {
+    for (const name of names) {
+      const value = saved.get(name);
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    }
+  }
+});
+
+test('automation stores only the three safe human-readable TTS direction tokens', async () => {
+  const { root, store } = await fixture();
+  const accepted = store.enqueueCommentary({ script: 'Now [PAUSE] this [sigh].', expectedRevision: 0, idempotencyKey: 'tts-markup:ok' });
+  assert.equal(accepted.accepted, true);
+  assert.equal(store.db.prepare('SELECT script FROM generations').pluck().get(), 'Now [pause] this [sigh].');
+  expectCode(() => store.enqueueCommentary({ script: 'No [whispers] please.', expectedRevision: store.revision(), idempotencyKey: 'tts-markup:bad' }), 'SCRIPT_TTS_MARKUP_INVALID');
+  expectCode(() => store.enqueueCommentary({ script: 'No <break time="9s" /> please.', expectedRevision: store.revision(), idempotencyKey: 'tts-markup:ssml' }), 'SCRIPT_TTS_MARKUP_INVALID');
+  store.close(); await fsp.rm(root, { recursive: true, force: true });
+});
+
+test('stored music transition accepts the full 10s policy cap', async () => {
+  const { root, store } = await fixture();
+  const music = asset(store, 'ten-second-transition');
+  const queued = store.enqueueTrack({ assetId: music, expectedRevision: 0, idempotencyKey: 'transition:ten', transitionMs: 10_000 });
+  const row = store.db.prepare('SELECT transition_kind,transition_duration_ms FROM cues WHERE id=?').get(queued.cue_id) as { transition_kind: string; transition_duration_ms: number };
+  assert.deepEqual(row, { transition_kind: 'crossfade', transition_duration_ms: 10_000 });
+  store.close(); await fsp.rm(root, { recursive: true, force: true });
 });

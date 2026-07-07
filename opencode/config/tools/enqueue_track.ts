@@ -9,7 +9,7 @@ export default tool({
     idempotency_key: tool.schema.string().min(1).max(128),
     transition: tool.schema.object({
       kind: tool.schema.literal('crossfade'),
-      duration_ms: tool.schema.number().int().min(500).max(5000),
+      duration_ms: tool.schema.number().int().min(500).max(10000),
     }).strict().optional(),
   },
   execute: (args, context) => automationTool('enqueue_track', args, context),

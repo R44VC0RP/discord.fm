@@ -18,7 +18,7 @@ export interface ApiDeps {
     enqueue(file: string): void | Promise<unknown>;
     unqueue(index: number): void | Promise<unknown>;
     skip(): void | Promise<unknown>;
-    setAuto(enabled: boolean): void | Promise<unknown>;
+    setAuto(enabled: boolean, expectedVersion?: number, idempotencyKey?: string): void | Promise<unknown>;
   };
   skin: SkinManager | null;
   getSnapshot: () => PresenceSnapshot;
@@ -32,6 +32,7 @@ export interface ApiDeps {
   announce: (force: boolean) => Promise<{ fired: boolean; reason?: string }>;
   /** Automation mode has no legacy spoken FIFO consumer. */
   automationOwnsSpoken?: boolean;
+  rerunOwner?: 'automation' | 'legacy';
 }
 
 async function readJson(req: http.IncomingMessage): Promise<Record<string, unknown>> {
@@ -62,7 +63,7 @@ export function startApi(deps: ApiDeps, port = 8090): http.Server {
             snapshot: deps.getSnapshot(),
             music: { state: deps.mixer.musicState, track: deps.getMusicTrack() },
             listeners: await deps.getListeners(),
-            rerun: await deps.rerun.state(),
+            rerun: { owner: deps.rerunOwner ?? 'legacy', available: true, ...((await deps.rerun.state()) as Record<string, unknown>) },
             skin: deps.skin ? await deps.skin.state() : null,
             voicemails: { queue: deps.getVoicemailQueue(), airing: deps.mixer.announcing },
           });
@@ -99,7 +100,13 @@ export function startApi(deps: ApiDeps, port = 8090): http.Server {
           return send(200, await deps.rerun.state());
         case 'POST /rerun/auto': {
           const body = await readJson(req);
-          await deps.rerun.setAuto(Boolean(body.enabled));
+          if (typeof body.enabled !== 'boolean') return send(400, { error: 'enabled must be boolean' });
+          if (deps.rerunOwner === 'automation') {
+            if (!Number.isInteger(body.expected_version) || Number(body.expected_version) < 1) return send(400, { error: 'expected_version must be a positive integer' });
+            if (typeof body.idempotency_key !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(body.idempotency_key)) return send(400, { error: 'invalid idempotency_key' });
+          }
+          if (deps.rerunOwner === 'automation') await deps.rerun.setAuto(body.enabled, Number(body.expected_version), String(body.idempotency_key));
+          else await deps.rerun.setAuto(body.enabled);
           return send(200, await deps.rerun.state());
         }
         case 'POST /voicemail/received': {
@@ -140,6 +147,15 @@ export function startApi(deps: ApiDeps, port = 8090): http.Server {
       }
       if (route === 'POST /skin' && error instanceof SkinControlUnavailableError) {
         return send(409, { error: error.message });
+      }
+      if (route.startsWith('POST /rerun/')) {
+        const control = error as { status?: unknown; code?: unknown };
+        const status = Number.isInteger(control?.status) && Number(control.status) >= 400 && Number(control.status) <= 599 ? Number(control.status) : 503;
+        const code = typeof control?.code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(control.code) ? control.code : 'RERUN_CONTROL_UNAVAILABLE';
+        const message = code === 'RERUN_VERSION_CONFLICT' ? 'rerun control changed — refresh and try again'
+          : code === 'IDEMPOTENCY_CONFLICT' ? 'rerun action key was reused with different content'
+            : 'rerun control is unavailable';
+        return send(status, { error: message, code });
       }
       send(500, { error: error instanceof Error ? error.message : 'internal error' });
     }

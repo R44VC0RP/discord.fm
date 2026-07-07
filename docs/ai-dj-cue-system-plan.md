@@ -480,7 +480,7 @@ Representative calls and results:
     "asset_id": "ast_music_01J...",
     "expected_queue_revision": 142,
     "idempotency_key": "djrun_01J...:track:1",
-    "transition": { "kind": "crossfade", "duration_ms": 3000 }
+    "transition": { "kind": "crossfade", "duration_ms": 6000 }
   },
   "result": {
     "accepted": true,
@@ -500,7 +500,7 @@ Representative calls and results:
     "intro_script": "A listener left us a question about the signal after midnight.",
     "outro_script": "Keep that dial steady; here is something for the road.",
     "next_track_asset_id": "ast_music_02J...",
-    "transition": { "kind": "crossfade", "duration_ms": 3000 },
+    "transition": { "kind": "crossfade", "duration_ms": 6000 },
     "expected_queue_revision": 143,
     "idempotency_key": "djrun_01J...:call:1"
   },
@@ -668,7 +668,7 @@ Hotline and rerun audio therefore never compete for separate “announcement” 
 
 ### Transition default
 
-The owner selected **crossfade**. MVP uses a fixed deterministic equal-power crossfade (initial recommendation: 3 seconds) for eligible music transitions; no BPM/key/beat analysis is involved. The DJ requests only the constrained `crossfade` policy, while application code clamps duration and chooses hard fade/static-sting fallback when either source is too short, unavailable, or not music. The DJ has no gain-envelope control.
+The owner selected **crossfade**. Production uses a fixed deterministic 6-second equal-power crossfade for eligible music transitions; no BPM/key/beat analysis is involved. A local deadline fires about 250ms before the nominal boundary so claim, verification, and decoder prebuffer do not shorten audible overlap. The ordinary 1-second poll remains fallback only. The DJ requests only the constrained `crossfade` policy (500ms–10s), while application code chooses hard boundaries when either source is unavailable or not music. The DJ has no gain-envelope control.
 
 ### Live ducking and boundary gate
 
@@ -1034,7 +1034,7 @@ Every deployment from Phase 1 onward runs the exclusion preflight before rsync, 
 
 | Parameter | Recommended initial value |
 | --- | --- |
-| Crossfade duration | 3 seconds, clamped by application policy |
+| Crossfade duration | 6 seconds by default, 500ms–10s application clamp |
 | Interrupted music | Resume from a conservative saved offset; spoken/calls never auto-resume |
 | Call detail use | Only facts traceable to the current redacted transcript; generic fallback on uncertainty |
 | Off-box backup | Private encrypted Backblaze B2 restic repo `anomaly-fm-private-backups/production/automation`; 14 daily, 8 weekly, 12 monthly; quarterly drill |

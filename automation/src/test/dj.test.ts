@@ -75,6 +75,10 @@ test('checked-in OpenCode config exposes only seven custom tool files and ordere
   assert.deepEqual({ cli: pkg.dependencies['opencode-ai'], plugin: pkg.dependencies['@opencode-ai/plugin'], capture: pkg.dependencies['@ai-sdk/openai-compatible'], zen: pkg.dependencies['@ai-sdk/openai'] },
     { cli: '1.17.13', plugin: '1.17.13', capture: '2.0.41', zen: '3.0.53' });
   assert.ok(Object.values(pkg.dependencies).every((version) => !/[~^*]|latest/u.test(version)));
+  for (const file of ['enqueue_track.ts', 'enqueue_hotline_group.ts']) {
+    const source = await fsp.readFile(path.join(toolDir, file), 'utf8');
+    assert.match(source, /\.max\(10000\)/u);
+  }
   const compose = await fsp.readFile(path.join(repo, 'docker-compose.yml'), 'utf8');
   const opencodeBlock = compose.slice(compose.indexOf('\n  opencode:'), compose.indexOf('\n  bot:'));
   assert.doesNotMatch(opencodeBlock, /env_file|AUTOMATION_INTERNAL_TOKEN/u);
@@ -141,7 +145,35 @@ test('daily DJ tool and model budgets fail soft into next-day backoff', async ()
   assert.equal(model.store.acquireDjLease('model_owner_2', model.config.djModel), null);
   const state = model.store.db.prepare('SELECT backoff_until,last_result FROM dj_state').get() as { backoff_until: string; last_result: string };
   assert.ok(new Date(state.backoff_until).getTime() > Date.now()); assert.equal(state.last_result, 'DAILY_BUDGET');
-  model.store.close(); await fsp.rm(model.root, { recursive: true, force: true });
+  model.store.close();
+
+  // A daily budget is derived from config, so switching it off must not leave
+  // the durable next-day backoff in place. Provider backoff is not touched.
+  const resumed = new (await import('../store.js')).AutomationStore({ ...model.config, djDailyModelTokenLimit: 0 });
+  const resumedState = resumed.db.prepare('SELECT backoff_until,last_result FROM dj_state').get() as { backoff_until: string | null; last_result: string | null };
+  assert.deepEqual(resumedState, { backoff_until: null, last_result: null });
+  assert.ok(resumed.acquireDjLease('model_owner_3', resumed.config.djModel));
+  resumed.db.prepare("UPDATE dj_state SET backoff_until=?,last_result='FAILED' WHERE singleton=1").run('2099-01-01T00:00:00.000Z');
+  resumed.close();
+  const providerBackoff = new (await import('../store.js')).AutomationStore({ ...model.config, djDailyModelTokenLimit: 0 });
+  assert.deepEqual(providerBackoff.db.prepare('SELECT backoff_until,last_result FROM dj_state').get(), { backoff_until: '2099-01-01T00:00:00.000Z', last_result: 'FAILED' });
+  providerBackoff.close(); await fsp.rm(model.root, { recursive: true, force: true });
+});
+
+test('zero daily DJ limits allow work while retaining tool and model accounting', async () => {
+  const fixture = await testFixture({ djEnabled: true, generationEnabled: true, djDailyToolLimit: 0, djDailyModelTokenLimit: 0, djCooldownMs: 0 });
+  const first = fixture.store.acquireDjLease('unlimited_owner', fixture.config.djModel) as { runId: string };
+  fixture.store.attachDjSession(first.runId, 'session_unlimited');
+  for (let index = 0; index < 3; index++) executeDjTool(fixture.store, fixture.config, 'get_queue', {}, 'session_unlimited');
+  fixture.store.finishDjRun(first.runId, 'COMPLETED', { inputTokens: 50_000, outputTokens: 40_000 });
+  assert.ok(fixture.store.acquireDjLease('unlimited_owner_2', fixture.config.djModel));
+  const status = fixture.store.djStatus() as { daily: Record<string, number> };
+  assert.deepEqual(status.daily, {
+    tool_calls: 3, tool_call_limit: 0,
+    model_tokens: 90_000, model_token_limit: 0,
+    tts_characters: 0, tts_character_limit: 20_000,
+  });
+  fixture.store.close(); await fsp.rm(fixture.root, { recursive: true, force: true });
 });
 
 test('DJ coordinator direct tool mutations refill low queue toward high targets', async () => {

@@ -73,6 +73,17 @@ export function createServer(store: AutomationStore, config: AutomationConfig, r
           search, status: url.searchParams.get('status'),
         }));
       }
+      const assetLifecycle = url.pathname.match(/^\/internal\/admin\/catalog\/assets\/([a-z][a-z0-9_]{2,79})\/(retire|restore)$/u);
+      if (request.method === 'POST' && assetLifecycle) {
+        const assetId = id(assetLifecycle[1], 'asset_id');
+        const raw = exactObject(await body(request, config.maxBodyBytes), ['expected_queue_revision', 'idempotency_key']);
+        const input = {
+          assetId,
+          expectedRevision: integer(raw.expected_queue_revision, 'expected_queue_revision', 0, Number.MAX_SAFE_INTEGER),
+          idempotencyKey: idempotencyKey(raw.idempotency_key),
+        };
+        return json(response, 200, assetLifecycle[2] === 'retire' ? store.retireMusicAsset(input) : store.restoreMusicAsset(input));
+      }
       const assetAudio = url.pathname.match(/^\/internal\/catalog\/assets\/([a-z][a-z0-9_]{2,79})\/audio$/u);
       if (request.method === 'GET' && assetAudio) {
         return streamAssetAudio(request, response, store, assetAudio[1] as string);
@@ -129,7 +140,7 @@ export function createServer(store: AutomationStore, config: AutomationConfig, r
         if (transition) invariant(transition.kind === 'crossfade', 'INVALID_TRANSITION', 'only crossfade is supported');
         return json(response, 201, store.enqueueTrack({
           assetId: id(raw.asset_id, 'asset_id'), expectedRevision: integer(raw.expected_queue_revision, 'expected_queue_revision', 0, Number.MAX_SAFE_INTEGER),
-          idempotencyKey: idempotencyKey(raw.idempotency_key), transitionMs: transition ? integer(transition.duration_ms, 'transition.duration_ms', 500, 5000) : undefined,
+          idempotencyKey: idempotencyKey(raw.idempotency_key), transitionMs: transition ? integer(transition.duration_ms, 'transition.duration_ms', 500, 10_000) : undefined,
           notBefore: optionalIso(raw.not_before, 'not_before'), expiresAt: optionalIso(raw.expires_at, 'expires_at'), source: optionalSource(raw.source),
         }));
       }
@@ -171,9 +182,13 @@ export function createServer(store: AutomationStore, config: AutomationConfig, r
       }
       if (request.method === 'POST' && url.pathname === '/internal/rerun/auto') {
         invariant(reruns, 'RERUN_SCHEDULER_UNAVAILABLE', 'rerun scheduler is unavailable', 503);
-        const raw = exactObject(await body(request, config.maxBodyBytes), ['enabled']);
+        const raw = exactObject(await body(request, config.maxBodyBytes), ['enabled', 'expected_version', 'idempotency_key']);
         invariant(typeof raw.enabled === 'boolean', 'INVALID_AUTO', 'enabled must be boolean');
-        return json(response, 200, await reruns.setAuto(raw.enabled));
+        return json(response, 200, await reruns.setAuto(
+          raw.enabled,
+          integer(raw.expected_version, 'expected_version', 1, Number.MAX_SAFE_INTEGER),
+          idempotencyKey(raw.idempotency_key),
+        ));
       }
       if (request.method === 'POST' && url.pathname === '/internal/generations/complete') {
         const raw = exactObject(await body(request, config.maxBodyBytes), ['job_id', 'asset_id', 'expected_queue_revision', 'idempotency_key']);

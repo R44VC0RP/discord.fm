@@ -4,7 +4,7 @@ import { Mixer, type ProgramFrameSource } from './mixer.js';
 import { ProgramSource, SilenceSource, verifyProgramAsset } from './program.js';
 
 type CueType = 'music' | 'spoken' | 'hotline' | 'rerun' | 'station_id' | 'silence';
-interface ClaimedCue { cue_id: string; type: CueType; planned_duration_ms: number; claim_token: string; claim_expires_at: string; checksum?: string; locator?: string; last_offset_ms?: number; public_metadata?: { title?: string; artist?: string }; }
+interface ClaimedCue { cue_id: string; type: CueType; planned_duration_ms: number; claim_token: string; claim_expires_at: string; checksum?: string; locator?: string; last_offset_ms?: number; transition?: { kind: 'crossfade'; duration_ms: number } | null; public_metadata?: { title?: string; artist?: string }; }
 interface ActiveCue { cue: ClaimedCue; source: ProgramFrameSource & { positionMs?: number; stop?: () => void; stalled?: boolean }; startedAt: number; leaseExpiresAt: number; }
 interface PendingSettlement {
   cue: ClaimedCue;
@@ -27,7 +27,7 @@ interface PendingClaim {
   revisionConflicts: number;
   nextAttemptAt: number;
 }
-export interface PlayoutOptions { enabled: boolean; url: string; token: string; assetRoots: string[]; crossfadeMs: number; pollMs?: number; claimAmbiguityMs?: number; onStateChange?: () => void; }
+export interface PlayoutOptions { enabled: boolean; url: string; token: string; assetRoots: string[]; crossfadeMs: number; crossfadeLeadMs?: number; pollMs?: number; claimAmbiguityMs?: number; onStateChange?: () => void; }
 export interface PublicPlayoutState { enabled: boolean; available: boolean; current: null | { type: CueType; title: string; artist: string; progress_ms: number; duration_ms: number }; next_depth: number | null; }
 
 class AutomationError extends Error {
@@ -55,11 +55,17 @@ export class PlayoutController {
   private lastPresenceAt = 0;
   private depth: number | null = null;
   private nextType: CueType | null = null;
+  private nextTransitionMs: number | null = null;
+  private crossfadeTimer: NodeJS.Timeout | null = null;
+  private crossfadeTimerCueId: string | null = null;
+  private crossfadeTimerDurationMs: number | null = null;
+  private crossfadeTimerDueAt = 0;
   private presenceKnown = false;
   private humans = 0;
   private available = true;
   private stationOverlayReserved = false;
   private pendingClaim: PendingClaim | null = null;
+  private claimInFlight = false;
   private revisionConflictRetries = 0;
   private revisionConflictRecoveries = 0;
   private revisionConflictExhaustions = 0;
@@ -97,6 +103,7 @@ export class PlayoutController {
   stop(): void {
     this.stopped = true;
     if (this.timer) clearInterval(this.timer); if (this.heartTimer) clearInterval(this.heartTimer);
+    this.clearCrossfadeDeadline();
     this.timer = null; this.heartTimer = null;
     for (const pending of this.pendingSettlements.values()) {
       if (pending.timer) clearTimeout(pending.timer);
@@ -122,7 +129,7 @@ export class PlayoutController {
   }
   /** Existing hourly ident is a station overlay, never a second queued speech owner. */
   canAirStationOverlay(): boolean {
-    return !this.stationOverlayReserved && this.presenceKnown && this.humans === 0 && this.pendingSettlements.size === 0
+    return !this.stationOverlayReserved && !this.claimInFlight && !this.pendingClaim && this.presenceKnown && this.humans === 0 && this.pendingSettlements.size === 0
       && !this.incoming && (!this.active || ['music', 'rerun'].includes(this.active.cue.type))
       && !['spoken', 'hotline', 'station_id'].includes(this.nextType ?? 'music');
   }
@@ -135,7 +142,9 @@ export class PlayoutController {
   async rerunState(): Promise<Record<string, unknown>> { return this.request('GET', '/internal/rerun/state') as Promise<Record<string, unknown>>; }
   async queueRerun(file: string): Promise<Record<string, unknown>> { return this.request('POST', '/internal/rerun/queue', { file }) as Promise<Record<string, unknown>>; }
   async unqueueRerun(index: number): Promise<Record<string, unknown>> { return this.request('POST', '/internal/rerun/unqueue', { index }) as Promise<Record<string, unknown>>; }
-  async setRerunAuto(enabled: boolean): Promise<Record<string, unknown>> { return this.request('POST', '/internal/rerun/auto', { enabled }) as Promise<Record<string, unknown>>; }
+  async setRerunAuto(enabled: boolean, expectedVersion: number, idempotencyKey: string): Promise<Record<string, unknown>> {
+    return this.request('POST', '/internal/rerun/auto', { enabled, expected_version: expectedVersion, idempotency_key: idempotencyKey }) as Promise<Record<string, unknown>>;
+  }
   async skipRerun(): Promise<Record<string, unknown>> {
     await this.run(async () => {
       const active = this.active;
@@ -163,41 +172,56 @@ export class PlayoutController {
     // while the claim response was unavailable.
     if (this.pendingSettlements.size > 0) return;
     if (this.pendingClaim) {
-      const recovered = await this.resolvePendingClaim();
-      if (!recovered) return;
-      await this.openAndStartClaim(recovered.cue, recovered.crossfade);
+      this.claimInFlight = true;
+      try {
+        const recovered = await this.resolvePendingClaim();
+        if (!recovered) return;
+        await this.openAndStartClaim(recovered.cue, recovered.crossfade);
+      } finally { this.claimInFlight = false; }
       return;
     }
     await this.snapshot();
     if (this.active) this.changed(); // publish bounded one-second progress
+    this.scheduleCrossfadeDeadline();
     // A pending terminal transition is an ordering barrier. Continue audio
     // already admitted into the mixer, but do not claim farther into a group
     // until the server confirms (or reconciles) its predecessor.
     if (!this.active) await this.claimAndStart(false);
-    else if (!this.incoming && this.active.cue.type === 'music' && this.nextType === 'music' && this.offset(this.active) >= Math.max(0, this.active.cue.planned_duration_ms - this.opts.crossfadeMs)) await this.claimAndStart(true);
+    else if (!this.incoming && this.active.cue.type === 'music' && this.nextType === 'music' && this.offset(this.active) >= Math.max(0, this.active.cue.planned_duration_ms - this.nextCrossfadeMs())) await this.claimAndStart(true);
   }).catch((error) => this.warn('playout tick failed; safety bed remains active', error)); }
 
   private async snapshot(timeoutMs = 5000, signal?: AbortSignal): Promise<void> {
-    const state = await this.request('GET', '/internal/playout/snapshot', undefined, timeoutMs, signal) as { queue_revision?: number; ready_count?: number; cues?: Array<{ state?: string; type?: CueType }> };
+    const state = await this.request('GET', '/internal/playout/snapshot', undefined, timeoutMs, signal) as { queue_revision?: number; ready_count?: number; cues?: Array<{ state?: string; type?: CueType; transition?: { kind?: string; duration_ms?: number } | null }> };
     const before = `${this.revision}:${this.depth}:${this.nextType}:${this.available}`;
     this.revision = Number(state.queue_revision ?? this.revision);
     this.depth = Number.isFinite(state.ready_count) ? Number(state.ready_count) : null;
-    this.nextType = state.cues?.find((cue) => cue.state === 'READY')?.type ?? null;
+    const next = state.cues?.find((cue) => cue.state === 'READY');
+    this.nextType = next?.type ?? null;
+    this.nextTransitionMs = next?.type === 'music' && next.transition?.kind === 'crossfade' && Number.isFinite(next.transition.duration_ms)
+      ? Math.min(10_000, Math.max(500, Number(next.transition.duration_ms))) : null;
     this.available = true;
     if (before !== `${this.revision}:${this.depth}:${this.nextType}:${this.available}`) this.changed();
   }
   private async claimAndStart(crossfade: boolean): Promise<void> {
+    if (this.claimInFlight || this.stopped) return;
+    this.claimInFlight = true;
     const claimKey = key('claim');
     const attempt: PendingClaim = {
       body: { expected_queue_revision: this.revision, worker_id: this.workerId, idempotency_key: claimKey, capabilities: ['finite_pcm', 'crossfade_v1'] },
       crossfade, reconcileAfter: Date.now() + (this.opts.claimAmbiguityMs ?? 30_000), attempts: 0, ambiguities: 0, revisionConflicts: 0, nextAttemptAt: 0,
     };
-    const result = await this.executeClaimAttempt(attempt);
-    if (!result) return;
-    await this.openAndStartClaim(result.cue, result.crossfade);
+    try {
+      const result = await this.executeClaimAttempt(attempt);
+      if (!result) return;
+      await this.openAndStartClaim(result.cue, result.crossfade);
+    } finally { this.claimInFlight = false; }
   }
   private async openAndStartClaim(cue: ClaimedCue | null, requestedCrossfade: boolean): Promise<void> {
     if (!cue) return;
+    if (this.stopped) {
+      await this.interrupt({ cue, source: new SilenceSource(1), startedAt: Date.now(), leaseExpiresAt: this.lease(cue) }, 'BOT_STOP');
+      return;
+    }
     // A crossfade claim may be recovered after its predecessor drained. Never
     // violate the settlement barrier or require a now-missing outgoing deck.
     const crossfade = requestedCrossfade && this.active !== null;
@@ -217,6 +241,7 @@ export class PlayoutController {
       await this.interrupt(failed, 'ASSET_VALIDATION_FAILED'); throw error;
     }
     active = { cue, source, startedAt: Date.now(), leaseExpiresAt: this.lease(cue) };
+    if (this.stopped) { source.stop?.(); await this.interrupt(active, 'BOT_STOP'); return; }
     const speech = !['music', 'rerun', 'silence'].includes(cue.type);
     // Decide synchronously before lifecycle start, so a spoken cue cannot be
     // terminally transitioned to PLAYING and then rejected by a busy mixer.
@@ -228,9 +253,21 @@ export class PlayoutController {
       }) as Promise<{ queue_revision?: number }>);
       this.revision = Number(started.queue_revision ?? this.revision);
     } catch (error) { source.stop?.(); await this.interrupt(active, 'START_ACK_FAILED'); throw error; }
-    const attached = crossfade ? this.mixer.crossfadeProgramSource(source, this.opts.crossfadeMs, speech) : this.mixer.setProgramSource(source, speech);
+    if (this.stopped) { source.stop?.(); await this.interrupt(active, 'BOT_STOP'); return; }
+    const attached = crossfade ? this.mixer.crossfadeProgramSource(source, this.crossfadeMsForCue(cue), speech) : this.mixer.setProgramSource(source, speech);
     if (!attached) { source.stop?.(); await this.interrupt(active, 'MIXER_SLOT_UNAVAILABLE'); return; }
-    if (crossfade) this.incoming = active; else this.active = active;
+    if (crossfade) { this.incoming = active; this.clearCrossfadeDeadline(); }
+    else {
+      this.active = active;
+      if (cue.type === 'music') {
+        const cueId = cue.cue_id;
+        queueMicrotask(() => void this.run(async () => {
+          if (this.stopped || this.active?.cue.cue_id !== cueId || this.incoming) return;
+          await this.snapshot();
+          this.scheduleCrossfadeDeadline();
+        }).catch((error) => this.warn('crossfade discovery failed; normal polling remains armed', error)));
+      }
+    }
     this.changed();
   }
   private async executeClaimAttempt(attempt: PendingClaim): Promise<{ cue: ClaimedCue | null; crossfade: boolean } | null> {
@@ -309,6 +346,7 @@ export class PlayoutController {
       this.active = slot === 'retired' ? this.incoming : null;
       this.incoming = null;
     }
+    this.clearCrossfadeDeadline();
     active.source.stop?.();
     if (this.stopped) return;
     if (this.pendingSettlements.has(active.cue.cue_id)) return;
@@ -482,7 +520,7 @@ export class PlayoutController {
   }
   private async loseLease(reason: string): Promise<void> {
     const cues = [this.active, this.incoming].filter((cue): cue is ActiveCue => cue !== null);
-    this.active = null; this.incoming = null; this.mixer.setProgramSource(null);
+    this.active = null; this.incoming = null; this.clearCrossfadeDeadline(); this.mixer.setProgramSource(null);
     for (const cue of cues) cue.source.stop?.();
     await Promise.all(cues.map((cue) => this.interrupt(cue, reason)));
   }
@@ -497,6 +535,52 @@ export class PlayoutController {
     } catch (error) { this.warn(`interrupt failed for ${active.cue.cue_id}`, error); }
   }
   private hasStalledDecoder(): boolean { return [this.active, this.incoming].some((cue) => Boolean(cue?.source.stalled)); }
+  private nextCrossfadeMs(): number { return this.nextTransitionMs ?? Math.min(10_000, Math.max(500, this.opts.crossfadeMs)); }
+  private crossfadeMsForCue(cue: ClaimedCue): number {
+    return cue.transition?.kind === 'crossfade' && Number.isFinite(cue.transition.duration_ms)
+      ? Math.min(10_000, Math.max(500, Number(cue.transition.duration_ms)))
+      : Math.min(10_000, Math.max(500, this.opts.crossfadeMs));
+  }
+  private scheduleCrossfadeDeadline(): void {
+    const active = this.active;
+    if (!active || active.cue.type !== 'music' || this.nextType !== 'music' || this.incoming || this.claimInFlight || this.pendingClaim || this.pendingSettlements.size > 0) {
+      this.clearCrossfadeDeadline(); return;
+    }
+    const durationMs = this.nextCrossfadeMs();
+    const leadMs = Math.min(1000, Math.max(0, this.opts.crossfadeLeadMs ?? 250));
+    const delay = Math.max(0, active.cue.planned_duration_ms - this.offset(active) - durationMs - leadMs);
+    const dueAt = Date.now() + delay;
+    if (this.crossfadeTimer && this.crossfadeTimerCueId === active.cue.cue_id && this.crossfadeTimerDurationMs === durationMs
+      && Math.abs(this.crossfadeTimerDueAt - dueAt) < 100) return;
+    this.clearCrossfadeDeadline();
+    this.crossfadeTimerCueId = active.cue.cue_id; this.crossfadeTimerDurationMs = durationMs;
+    this.crossfadeTimerDueAt = dueAt;
+    this.crossfadeTimer = setTimeout(() => {
+      this.crossfadeTimer = null;
+      void this.run(() => this.fireCrossfadeDeadline(active.cue.cue_id)).catch((error) => this.warn('crossfade deadline failed; normal polling remains armed', error));
+    }, delay);
+    this.crossfadeTimer.unref();
+  }
+  private async fireCrossfadeDeadline(cueId: string): Promise<void> {
+    this.crossfadeTimerCueId = null; this.crossfadeTimerDurationMs = null; this.crossfadeTimerDueAt = 0;
+    if (this.stopped || this.stationOverlayReserved) {
+      if (!this.stopped && this.stationOverlayReserved) {
+        this.crossfadeTimerCueId = cueId;
+        this.crossfadeTimerDueAt = Date.now() + 100;
+        this.crossfadeTimer = setTimeout(() => { this.crossfadeTimer = null; void this.run(() => this.fireCrossfadeDeadline(cueId)); }, 100);
+        this.crossfadeTimer.unref();
+      }
+      return;
+    }
+    if (!this.active || this.active.cue.cue_id !== cueId || this.active.cue.type !== 'music' || this.incoming || this.pendingClaim || this.pendingSettlements.size > 0) return;
+    await this.snapshot();
+    if (this.stopped || this.stationOverlayReserved || this.nextType !== 'music') return;
+    await this.claimAndStart(true);
+  }
+  private clearCrossfadeDeadline(): void {
+    if (this.crossfadeTimer) clearTimeout(this.crossfadeTimer);
+    this.crossfadeTimer = null; this.crossfadeTimerCueId = null; this.crossfadeTimerDurationMs = null; this.crossfadeTimerDueAt = 0;
+  }
   private lease(cue: ClaimedCue): number { const value = Date.parse(cue.claim_expires_at); return Number.isFinite(value) ? value : Date.now(); }
   private offset(active: ActiveCue): number { return Math.max(0, Math.round(active.source.positionMs ?? (Date.now() - active.startedAt))); }
   private async withRevisionRetry<T>(scope: string, operation: () => Promise<T>): Promise<T> {

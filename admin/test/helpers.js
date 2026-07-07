@@ -80,6 +80,15 @@ function createFakeAutomation() {
         res.writeHead(200, { 'content-type': 'audio/mpeg', 'accept-ranges': 'bytes', 'content-length': bytes.length });
         return res.end(bytes);
       }
+      const lifecycle = url.pathname.match(/^\/internal\/admin\/catalog\/assets\/(ast_[a-f0-9]{32})\/(retire|restore)$/);
+      if (req.method === 'POST' && lifecycle && !overrides.has(key)) {
+        const input = JSON.parse(call.body || '{}');
+        return json(res, 200, {
+          accepted: true, asset_id: lifecycle[1], status: lifecycle[2] === 'retire' ? 'RETIRED' : 'READY',
+          queue_revision: Number(input.expected_queue_revision) + 1, canceled_cues: lifecycle[2] === 'retire' ? 2 : 0,
+          locator: '/music/private.mp3', checksum: 'SECRET_CHECKSUM', internal_note: 'SECRET',
+        });
+      }
       const handler = overrides.get(key) || defaults[key];
       if (!handler) return json(res, 404, { error: { code: 'NOT_FOUND', message: 'endpoint not found' } });
       handler(call, res);

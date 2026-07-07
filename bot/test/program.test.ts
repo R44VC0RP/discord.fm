@@ -24,6 +24,15 @@ class CountingTone implements ProgramFrameSource {
   constructor(private readonly value: number) {}
   readFrame(): Buffer { this.frames += 1; return toneFrame(this.value); }
 }
+class FiniteTone implements ProgramFrameSource {
+  frames = 0;
+  constructor(private remaining: number, private readonly value: number) {}
+  get finished(): boolean { return this.remaining <= 0; }
+  readFrame(): Buffer | null { if (this.remaining <= 0) return null; this.remaining -= 1; this.frames += 1; return toneFrame(this.value); }
+}
+class PositionedTone extends Tone {
+  constructor(value: number, public positionMs: number) { super(value); }
+}
 class OneFrameTone implements ProgramFrameSource {
   private done = false;
   get finished(): boolean { return this.done; }
@@ -35,6 +44,14 @@ function toneFrame(value: number): Buffer { const frame = Buffer.alloc(BYTES_PER
 function write(mixer: Mixer, n: number): void {
   const privateMixer = mixer as unknown as { writeFrame(): void };
   for (let i = 0; i < n; i += 1) privateMixer.writeFrame();
+}
+async function pumpMixerUntil(mixer: Mixer, condition: () => boolean, maxFrames = 10_000): Promise<void> {
+  for (let index = 0; index < maxFrames; index += 1) {
+    write(mixer, 1);
+    if (condition()) return;
+    if (index % 5 === 0) await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  assert.fail(`mixer condition not met within ${maxFrames} frames`);
 }
 function silenceGroup(store: AutomationStore, prefix: string, durations = [80, 100]): string[] {
   const ids: string[] = [];
@@ -146,6 +163,78 @@ test('equal-power music crossfade has no silent frame and stays below clipping',
   assert.ok(values.every((value) => value !== 0));
   assert.ok(Math.max(...values.map(Math.abs)) < 32767);
   assert.ok(Math.abs(values[75] ?? 0) > 12_000, 'equal-power midpoint retains energy');
+});
+
+test('90,044ms music transition produces a full 6s equal-power audible overlap', () => {
+  const mixer = new Mixer(); const out: Buffer[] = [];
+  mixer.setSink((frame) => out.push(Buffer.from(frame)));
+  mixer.configureAutomation({ baseGain: 1, duckGain: .1, stepDown: 1, stepUp: 1 });
+  const outgoing = new FiniteTone(Math.ceil(90_044 / 20), 10_000);
+  const incoming = new FiniteTone(Math.ceil(90_044 / 20), 10_000);
+  mixer.setProgramSource(outgoing);
+  // Decoder exists but cannot advance or become audible before attachment.
+  write(mixer, Math.ceil((90_044 - 6250) / 20));
+  assert.equal(incoming.frames, 0);
+  assert.equal(mixer.crossfadeProgramSource(incoming, 6000), true);
+  const start = out.length; write(mixer, 300);
+  assert.equal(outgoing.frames - Math.ceil((90_044 - 6250) / 20), 300);
+  assert.equal(incoming.frames, 300);
+  const overlap = out.slice(start).map(sample);
+  assert.equal(overlap.length * 20, 6000);
+  assert.ok(overlap.every((value) => value !== 0));
+  assert.ok(Math.abs(overlap[149]!) > 13_500, `midpoint=${overlap[149]}`);
+  assert.ok(Math.max(...overlap.map(Math.abs)) < 32767);
+  assert.ok(overlap.slice(1).every((value, index) => Math.abs(value - overlap[index]!) < 500), 'equal-power envelope must not click');
+});
+
+test('one-shot crossfade deadline fires ~250ms early and cancels at protected boundaries', async () => {
+  const make = (nextType: 'music' | 'spoken', reserved = false) => {
+    const mixer = new Mixer(); const controller = new PlayoutController(mixer, { enabled: true, url: 'http://127.0.0.1:1', token: 'test', assetRoots: [], crossfadeMs: 6000, crossfadeLeadMs: 250 });
+    const source = new PositionedTone(1000, 83_790); let claims = 0;
+    const internal = controller as unknown as { active: unknown; nextType: string; nextTransitionMs: number; stationOverlayReserved: boolean; scheduleCrossfadeDeadline(): void; claimAndStart(crossfade: boolean): Promise<void>; snapshot(): Promise<void>; loseLease(reason: string): Promise<void>; interrupt(): Promise<void>; crossfadeTimer: NodeJS.Timeout | null };
+    internal.active = { cue: { cue_id: 'cue_90s', type: 'music', planned_duration_ms: 90_044, claim_token: 'token', claim_expires_at: new Date(Date.now() + 30_000).toISOString() }, source, startedAt: Date.now(), leaseExpiresAt: Date.now() + 30_000 };
+    internal.nextType = nextType; internal.nextTransitionMs = 6000; internal.stationOverlayReserved = reserved;
+    internal.snapshot = async () => {};
+    internal.claimAndStart = async (crossfade) => { assert.equal(crossfade, true); claims += 1; };
+    return { controller, internal, source, get claims() { return claims; } };
+  };
+  const due = make('music'); due.internal.scheduleCrossfadeDeadline(); due.internal.scheduleCrossfadeDeadline();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(due.claims, 1, 'remaining 6254ms should trigger once after about 4ms'); due.internal.active = null; due.controller.stop();
+
+  const overlayRace = make('music');
+  overlayRace.internal.snapshot = async () => { overlayRace.internal.stationOverlayReserved = true; };
+  overlayRace.internal.scheduleCrossfadeDeadline(); await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(overlayRace.claims, 0, 'an ident reserved during discovery keeps a hard boundary');
+  overlayRace.internal.active = null; overlayRace.controller.stop();
+
+  const speech = make('spoken'); speech.internal.scheduleCrossfadeDeadline();
+  assert.equal(speech.internal.crossfadeTimer, null, 'music→speech is a hard boundary'); speech.internal.active = null; speech.controller.stop();
+
+  const reserved = make('music', true); reserved.internal.scheduleCrossfadeDeadline();
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(reserved.claims, 0, 'ident reservation blocks prefetch/claim'); reserved.internal.active = null; reserved.controller.stop();
+
+  const stopped = make('music'); stopped.internal.scheduleCrossfadeDeadline(); stopped.internal.active = null; stopped.controller.stop();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(stopped.claims, 0, 'stop cancels deadline');
+
+  const leaseLost = make('music'); leaseLost.source.positionMs = 83_000; leaseLost.internal.scheduleCrossfadeDeadline();
+  leaseLost.internal.interrupt = async () => {}; await leaseLost.internal.loseLease('TEST_LEASE_LOST');
+  assert.equal(leaseLost.internal.crossfadeTimer, null); assert.equal(leaseLost.claims, 0);
+
+  const failed = make('music'); let failedCalls = 0; failed.internal.claimAndStart = async () => { failedCalls += 1; throw new Error('injected claim failure'); };
+  failed.internal.scheduleCrossfadeDeadline(); await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(failedCalls, 1); assert.equal(failed.internal.crossfadeTimer, null);
+  failed.internal.active = null; failed.controller.stop();
+});
+
+test('stored 3s transition remains authoritative after default changes to 6s', () => {
+  const controller = new PlayoutController(new Mixer(), { enabled: true, url: 'http://127.0.0.1:1', token: 'test', assetRoots: [], crossfadeMs: 6000 });
+  const internal = controller as unknown as { crossfadeMsForCue(cue: unknown): number };
+  assert.equal(internal.crossfadeMsForCue({ transition: { kind: 'crossfade', duration_ms: 3000 } }), 3000);
+  assert.equal(internal.crossfadeMsForCue({ transition: null }), 6000);
+  controller.stop();
 });
 
 test('asset verification rejects checksum tampering and symlink escapes', async (t) => {
@@ -438,7 +527,7 @@ test('controller mirrors repeated real mixer crossfade promotions atomically', a
   await internal.claimAndStart(true);
   assert.equal(internal.active?.cue.cue_id, 'cue_b');
   assert.equal(internal.incoming?.cue.cue_id, 'cue_c');
-  write(mixer, 2);
+  write(mixer, 25); // controller clamps stored/default transition to 500ms minimum
   await waitFor(() => internal.active?.cue.cue_id === 'cue_c' && internal.incoming === null);
   await waitFor(() => completed.length === 2);
   assert.deepEqual(completed, ['cue_a', 'cue_b']);
@@ -499,6 +588,57 @@ test('real A-B-C decoder lifecycle completes every cue and permits the next clai
   await waitFor(() => (store.db.prepare('SELECT state FROM cues WHERE id=?').get(next.cue_id) as { state: string }).state === 'COMPLETED');
   await waitFor(() => internal.active === null && internal.incoming === null && !mixer.automationActive);
   assert.equal((store.db.prepare("SELECT count(*) count FROM cue_events WHERE cue_id=? AND event_type='COMPLETED'").get(next.cue_id) as { count: number }).count, 1);
+});
+
+test('real automation + ffmpeg starts a stored 6s fade early enough on 90,044ms tracks', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'anomaly-real-90s-crossfade-'));
+  await Promise.all(['music', 'generated', 'recordings', 'voicemails', 'feed'].map((dir) => mkdir(join(root, dir))));
+  const musicDir = await realpath(join(root, 'music'));
+  try {
+    for (const [name, frequency] of [['A', 330], ['B', 550]] as const) {
+      execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', `sine=frequency=${frequency}:duration=90.044`, '-ar', '48000', '-ac', '2', '-b:a', '96k', '-y', join(musicDir, `${name}.mp3`)]);
+    }
+  } catch { await rm(root, { recursive: true, force: true }); t.skip('ffmpeg unavailable'); return; }
+  const cfg = testConfig(root, { playoutEnabled: true, crossfadeMs: 6000, assetRepeatMs: 0, artistRepeatMs: 0, claimLeaseMs: 30_000 });
+  const store = new AutomationStore(cfg); await importMusic(store, musicDir);
+  store.db.prepare('UPDATE assets SET duration_ms=90044').run();
+  const assets = store.db.prepare('SELECT id FROM assets ORDER BY title').all() as Array<{ id: string }>;
+  assets.forEach((asset, index) => store.enqueueTrack({ assetId: asset.id, expectedRevision: index, idempotencyKey: `real90:${index}`, transitionMs: 6000 }));
+  const cueIds = (store.db.prepare('SELECT id FROM cues ORDER BY queue_position').all() as Array<{ id: string }>).map((row) => row.id);
+  const server = createServer(store, cfg); await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address() as import('node:net').AddressInfo;
+  const mixer = new Mixer(); mixer.setSink(() => {}); mixer.configureAutomation({ baseGain: 1, duckGain: .1, stepDown: 1, stepUp: 1 });
+  const controller = new PlayoutController(mixer, { enabled: true, url: `http://127.0.0.1:${address.port}`, token: cfg.internalToken, assetRoots: [musicDir], crossfadeMs: 6000, crossfadeLeadMs: 250, pollMs: 1000 });
+  const internal = controller as unknown as { active: { cue: { cue_id: string }; source: { positionMs: number } } | null; incoming: { cue: { cue_id: string }; source: { positionMs: number } } | null; tick(): Promise<void>; serial: Promise<void> };
+  t.after(async () => { controller.stop(); await internal.serial; await new Promise<void>((resolve) => server.close(() => resolve())); store.close(); await rm(root, { recursive: true, force: true }); });
+  await controller.setPresence(0); await internal.tick();
+  assert.equal(internal.active?.cue.cue_id, cueIds[0]); assert.equal(internal.incoming, null);
+  await pumpMixerUntil(mixer, () => Number(internal.active?.source.positionMs ?? 0) >= 83_790, 6000);
+  assert.equal(internal.incoming, null, 'next decoder must not advance before deadline attachment');
+  await internal.tick(); // one normal snapshot discovers B and arms the one-shot deadline
+  const progression = setInterval(() => write(mixer, 1), 20);
+  try { await waitFor(() => internal.incoming?.cue.cue_id === cueIds[1], 5000); } finally { clearInterval(progression); }
+  const outgoing = internal.active!; const incoming = internal.incoming!;
+  const remainingAtAttach = 90_044 - outgoing.source.positionMs;
+  assert.ok(remainingAtAttach >= 5800 && remainingAtAttach <= 6250, `remaining at attach=${remainingAtAttach}`);
+  let dualFrames = 0; const overlapSamples: number[] = []; mixer.setSink((frame) => overlapSamples.push(sample(frame)));
+  for (let index = 0; index < 320 && internal.active?.cue.cue_id === cueIds[0]; index += 1) {
+    const beforeA = outgoing.source.positionMs; const beforeB = incoming.source.positionMs;
+    write(mixer, 1);
+    if (outgoing.source.positionMs > beforeA && incoming.source.positionMs > beforeB) dualFrames += 1;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  await waitFor(() => internal.active?.cue.cue_id === cueIds[1], 2000);
+  const audibleOverlapMs = dualFrames * 20;
+  assert.ok(audibleOverlapMs >= 5800 && audibleOverlapMs <= 6200, `audible overlap=${audibleOverlapMs}ms`);
+  assert.ok(overlapSamples.every((value) => Number.isFinite(value)), 'mixed frames remain valid');
+  // Accelerated frame pumping can briefly outrun ffmpeg under host contention;
+  // extra event-loop yields test lifecycle completion, not decoder CPU speed.
+  await pumpMixerUntil(mixer, () => internal.active === null, 12_000);
+  await waitFor(() => cueIds.every((id) => (store.db.prepare('SELECT state FROM cues WHERE id=?').get(id) as { state: string }).state === 'COMPLETED'), 5000);
+  const lifecycle = store.db.prepare('SELECT id,started_at,completed_at FROM cues ORDER BY queue_position').all() as Array<{ id: string; started_at: string; completed_at: string }>;
+  assert.ok(Date.parse(lifecycle[1]!.started_at) <= Date.parse(lifecycle[0]!.completed_at), JSON.stringify(lifecycle));
+  assert.deepEqual((store.db.prepare("SELECT cue_id FROM cue_events WHERE event_type='COMPLETED' ORDER BY id").all() as Array<{ cue_id: string }>).map((row) => row.cue_id), cueIds);
 });
 
 test('DJ enqueue racing a deterministic rerun claim refreshes CAS once without claim churn', async (t) => {
@@ -566,7 +706,7 @@ test('transient complete failure settles real short A-B playout without heartbea
   const musicDir = join(root, 'music'); await mkdir(musicDir);
   const canonicalMusicDir = await realpath(musicDir);
   try {
-    for (const [name, frequency, duration] of [['A', 330, 0.60], ['B', 550, 0.50]] as const) {
+    for (const [name, frequency, duration] of [['A', 330, 1.20], ['B', 550, 1.00]] as const) {
       execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', `sine=frequency=${frequency}:duration=${duration}`, '-ar', '48000', '-ac', '2', '-b:a', '96k', '-y', join(musicDir, `${name}.mp3`)]);
     }
   } catch { await rm(root, { recursive: true, force: true }); t.skip('ffmpeg unavailable'); return; }

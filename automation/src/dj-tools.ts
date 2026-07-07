@@ -62,7 +62,7 @@ function executeValidated(store: AutomationStore, config: AutomationConfig, tool
         assetId: id(raw.asset_id, 'asset_id'),
         expectedRevision: integer(raw.expected_queue_revision, 'expected_queue_revision', 0, Number.MAX_SAFE_INTEGER),
         idempotencyKey: idempotencyKey(raw.idempotency_key),
-        transitionMs: transition ? integer(transition.duration_ms, 'transition.duration_ms', 500, 5000) : config.crossfadeMs,
+        transitionMs: transition ? integer(transition.duration_ms, 'transition.duration_ms', 500, 10_000) : config.crossfadeMs,
         source: 'dj_tool',
       });
     }
@@ -83,7 +83,7 @@ function executeValidated(store: AutomationStore, config: AutomationConfig, tool
       const transition = raw.transition === undefined ? null : exactObject(raw.transition, ['kind', 'duration_ms'], 'transition');
       if (transition) {
         invariant(transition.kind === 'crossfade', 'INVALID_TRANSITION', 'only crossfade is supported');
-        integer(transition.duration_ms, 'transition.duration_ms', 500, 5000);
+        integer(transition.duration_ms, 'transition.duration_ms', 500, 10_000);
       }
       return store.enqueueHotlineGroup({
         candidateId: id(raw.candidate_id, 'candidate_id'),

@@ -388,6 +388,10 @@ const SAFE_AUTOMATION_ERRORS = {
   ASSET_NOT_READY: 'the asset is not READY',
   ASSET_KIND_MISMATCH: 'that asset kind cannot be used here',
   ASSET_FILE_MISSING: 'the asset audio file is missing',
+  ASSET_ACTIVE: 'the asset or its atomic queue group is claimed or playing',
+  ASSET_STATE_CONFLICT: 'the asset state changed — refresh and try again',
+  ASSET_CHANGED_DURING_VALIDATION: 'the asset changed while it was being validated — restore was refused',
+  ASSET_FILE_SIZE: 'the retained asset size is outside the safe restore limit',
   CHECKSUM_MISMATCH: 'the asset bytes no longer match the catalog',
   REPEAT_BLOCKED: 'that track is already queued or inside its repeat window',
   ARTIST_REPEAT_BLOCKED: 'that artist is already queued or inside the repeat window',
@@ -431,12 +435,37 @@ const WATERMARK_KEYS = ['low_count', 'high_count', 'low_duration_ms', 'target_du
 const oneOf = (value, allowed, fallback = null) => allowed.includes(value) ? value : fallback;
 const safeNumber = (value, min = 0, max = Number.MAX_SAFE_INTEGER) =>
   typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max ? value : 0;
+const safeDailyLimit = (value) => {
+  if (value === 0) return 'unlimited';
+  return Number.isInteger(value) && value > 0 && value <= Number.MAX_SAFE_INTEGER ? value : null;
+};
 const safeDate = (value) => {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value)) return null;
   return Number.isNaN(Date.parse(value)) ? null : value;
 };
 const safeVersion = (value) =>
   typeof value === 'string' && /^\d{1,5}\.\d{1,5}\.\d{1,5}$/.test(value) ? value : null;
+
+const safeRerunFile = (value) => typeof value === 'string' && /^session-[\w.-]+\.mp3$/.test(value) ? value : null;
+const projectRerun = (body) => {
+  const source = body && typeof body === 'object' ? body : {};
+  const paused = source.paused && typeof source.paused === 'object' ? source.paused : null;
+  const cycle = source.cycle && typeof source.cycle === 'object' ? source.cycle : {};
+  return {
+    owner: source.owner === 'automation' ? 'automation' : 'legacy',
+    available: source.available !== false,
+    auto: typeof source.auto === 'boolean' ? source.auto : null,
+    control_version: Number.isInteger(source.control_version) && source.control_version >= 1 ? source.control_version : null,
+    manual_bypasses_auto: source.manual_bypasses_auto === true,
+    playing: safeRerunFile(source.playing),
+    position: safeNumber(source.position, 0, 86_400),
+    paused: paused && safeRerunFile(paused.file) ? { file: safeRerunFile(paused.file), offset: safeNumber(paused.offset, 0, 86_400) } : null,
+    queue: (Array.isArray(source.queue) ? source.queue : []).map(safeRerunFile).filter(Boolean).slice(0, 10_000),
+    nextUp: safeRerunFile(source.nextUp),
+    waitSeconds: source.waitSeconds === null ? null : safeNumber(source.waitSeconds, 0, 86_400),
+    cycle: { played: safeNumber(cycle.played, 0, 1_000_000), total: safeNumber(cycle.total, 0, 1_000_000) },
+  };
+};
 
 const projectQueue = (body) => ({
   queue_revision: body.queue_revision,
@@ -505,8 +534,14 @@ const projectDj = (body) => {
       state: runState,
       message_code: `DJ_RUN_${runState}`,
     } : null,
-    daily: Object.fromEntries(['tool_calls', 'tool_call_limit', 'model_tokens', 'model_token_limit', 'tts_characters', 'tts_character_limit']
-      .map((key) => [key, safeNumber(daily[key], 0)])),
+    daily: {
+      tool_calls: safeNumber(daily.tool_calls, 0),
+      tool_call_limit: safeDailyLimit(daily.tool_call_limit),
+      model_tokens: safeNumber(daily.model_tokens, 0),
+      model_token_limit: safeDailyLimit(daily.model_token_limit),
+      tts_characters: safeNumber(daily.tts_characters, 0),
+      tts_character_limit: safeDailyLimit(daily.tts_character_limit),
+    },
     watermarks: Object.fromEntries(WATERMARK_KEYS.map((key) => [key, safeNumber(watermarks[key], 0)])),
     tools: [...new Set((Array.isArray(body && body.tools) ? body.tools : []).filter((tool) => DJ_TOOLS.includes(tool)))],
   };
@@ -527,6 +562,7 @@ const projectHotline = (body) => ({
 const projectEnqueue = (body) => pick(body, ['accepted', 'queue_revision', 'state']);
 const projectReview = (body) => pick(body, ['status', 'moderation_version', 'operator_override']);
 const projectUpload = (body) => pick(body, ['created', 'duplicate', 'asset_id', 'title', 'duration_ms']);
+const projectAssetLifecycle = (body) => pick(body, ['accepted', 'asset_id', 'status', 'queue_revision', 'canceled_cues']);
 
 // --- upload staging accounting + registration reconciliation --------------
 
@@ -933,7 +969,8 @@ const server = http.createServer(async (req, res) => {
         listMusic(),
         listVoicemails(),
       ]);
-      return send(res, 200, { bot: bot.body, recordings, music, voicemails });
+      const botBody = bot.body && typeof bot.body === 'object' ? bot.body : {};
+      return send(res, 200, { bot: { ...botBody, rerun: projectRerun(botBody.rerun) }, recordings, music, voicemails });
     }
 
     // voicemails
@@ -1033,7 +1070,7 @@ const server = http.createServer(async (req, res) => {
       const chunks = [];
       for await (const chunk of req) chunks.push(chunk);
       const out = await botFetch(p.replace('/api', ''), { method: 'POST', body: Buffer.concat(chunks).toString() || '{}' });
-      return send(res, out.status, out.body);
+      return send(res, out.status, out.status >= 200 && out.status < 300 ? projectRerun(out.body) : out.body);
     }
 
     // music bed
@@ -1100,6 +1137,13 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && p === '/api/automation/hotline/review') {
       const out = projected(await automationFetch('/internal/hotline/review', { method: 'POST', body: await readProxyBody(req) }), projectReview);
+      return send(res, out.status, out.body);
+    }
+    const assetLifecycle = p.match(/^\/api\/automation\/assets\/(ast_[a-f0-9]{32})\/(retire|restore)$/);
+    if (req.method === 'POST' && assetLifecycle) {
+      const out = projected(await automationFetch(`/internal/admin/catalog/assets/${assetLifecycle[1]}/${assetLifecycle[2]}`, {
+        method: 'POST', body: await readProxyBody(req),
+      }), projectAssetLifecycle);
       return send(res, out.status, out.body);
     }
 
@@ -1259,4 +1303,4 @@ if (require.main === module) {
   if (AUTOMATION_TOKEN) setTimeout(() => void reconcileUnresolvedUploads().catch(() => {}), 5000);
 }
 
-module.exports = { server, reconcileUnresolvedUploads };
+module.exports = { server, reconcileUnresolvedUploads, projectRerun };

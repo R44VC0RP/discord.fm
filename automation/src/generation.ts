@@ -7,6 +7,7 @@ import type { AutomationConfig, ProbeResult } from './types.js';
 import type { AutomationStore, ClaimedGenerationJob } from './store.js';
 import { ffprobe, sha256File } from './importer.js';
 import { DomainError } from './errors.js';
+import { prepareElevenLabsTts } from './tts.js';
 
 export interface RenderResult {
   probe: ProbeResult;
@@ -23,10 +24,15 @@ export class ElevenLabsRenderer implements SpeechRenderer {
   async render(script: string, outputPath: string, signal: AbortSignal): Promise<RenderResult> {
     const rawPath = `${outputPath}.provider`;
     try {
+      const tts = prepareElevenLabsTts(script, this.config.elevenLabsModelId);
       const response = await this.fetchImpl(`${this.config.elevenLabsBaseUrl}/v1/text-to-speech/${encodeURIComponent(this.config.elevenLabsVoiceId)}?output_format=mp3_44100_128`, {
         method: 'POST',
         headers: { 'xi-api-key': this.config.elevenLabsKey, accept: 'audio/mpeg', 'content-type': 'application/json' },
-        body: JSON.stringify({ text: script, model_id: this.config.elevenLabsModelId }),
+        body: JSON.stringify({
+          text: tts.requestText,
+          model_id: this.config.elevenLabsModelId,
+          voice_settings: { speed: this.config.elevenLabsSpeechSpeed },
+        }),
         signal,
       });
       if (!response.ok || !response.body) throw new DomainError('TTS_HTTP_ERROR', `ElevenLabs returned HTTP ${response.status}`, 502);
@@ -87,7 +93,10 @@ export class GenerationWorker {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), Math.min(this.config.generationLeaseMs - 1000, 110_000));
     try {
-      const ttsBudget = this.store.reserveTtsCharacters(job.jobId, job.script.length);
+      // Budget provider characters, not the readable stored audit script: v2
+      // break markup expands a direction token before it reaches ElevenLabs.
+      const tts = prepareElevenLabsTts(job.script, this.config.elevenLabsModelId);
+      const ttsBudget = this.store.reserveTtsCharacters(job.jobId, tts.requestText.length);
       if (!ttsBudget.accepted) {
         this.store.deferGenerationJob(job.jobId, 'TTS_DAILY_BUDGET', 'daily TTS character budget exhausted', ttsBudget.retryAt);
         return;

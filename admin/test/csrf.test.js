@@ -37,6 +37,8 @@ const MUTATIONS = [
   ['POST', '/api/automation/queue/track'],
   ['POST', '/api/automation/queue/commentary'],
   ['POST', '/api/automation/hotline/review'],
+  ['POST', '/api/automation/assets/ast_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/retire'],
+  ['POST', '/api/automation/assets/ast_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/restore'],
   ['PUT', '/api/automation/upload'],
 ];
 
